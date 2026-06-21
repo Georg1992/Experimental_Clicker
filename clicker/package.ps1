@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $clickerDir = $PSScriptRoot
 $rootDir = Split-Path $clickerDir -Parent
+$packagingDir = Join-Path $rootDir "packaging"
 $releaseDir = Join-Path $rootDir "release"
 $packageName = "BelarusChampClicker-Windows-x64"
 $stagingDir = Join-Path $releaseDir $packageName
@@ -20,13 +21,16 @@ if (-not (Test-Path $builtExe)) {
 
 Write-Host "Preparing release package..." -ForegroundColor Cyan
 
+if (Test-Path $stagingDir) {
+    Remove-Item $stagingDir -Recurse -Force
+}
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
 
 Copy-Item $builtExe (Join-Path $stagingDir $appExeName) -Force
-Copy-Item (Join-Path $releaseDir "README.txt") $stagingDir -Force
-Copy-Item (Join-Path $releaseDir "README.ru.txt") $stagingDir -Force
-Copy-Item (Join-Path $releaseDir "Install.cmd") $stagingDir -Force
-Copy-Item (Join-Path $releaseDir "Uninstall.cmd") $stagingDir -Force
+Copy-Item (Join-Path $packagingDir "README.txt") $stagingDir -Force
+Copy-Item (Join-Path $packagingDir "README.ru.txt") $stagingDir -Force
+Copy-Item (Join-Path $packagingDir "Install.cmd") $stagingDir -Force
+Copy-Item (Join-Path $packagingDir "Uninstall.cmd") $stagingDir -Force
 
 if (Test-Path $zipPath) {
     Remove-Item $zipPath -Force

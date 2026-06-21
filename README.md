@@ -12,9 +12,12 @@ Experimental_Clicker/
     package.ps1                  ← build user ZIP
     gui/                         ← Walk UI + embedded VIIPER server
     runner/                      ← click loop, key mappings, pause
-  release/
+  packaging/
     README.txt / README.ru.txt
-    Install.cmd
+    Install.cmd / Uninstall.cmd
+  release/                           ← build output only (folder + zip)
+    BelarusChampClicker-Windows-x64/
+    BelarusChampClicker-Windows-x64.zip
   VIIPER/                        ← git submodule
 ```
 
@@ -26,7 +29,7 @@ Open **`Experimental_Clicker`** in your editor — not the `VIIPER/` folder alon
 - Go 1.26+ (for building)
 - [usbip-win2](https://github.com/vadimgrn/usbip-win2) kernel driver (one-time install + reboot)
 
-The release `Install.cmd` installs the driver automatically.
+The packaged `Install.cmd` installs the driver automatically.
 
 ## Build
 
@@ -45,9 +48,9 @@ cd clicker
 .\package.ps1
 ```
 
-Output: `release/BelarusChampClicker-Windows-x64.zip`
+Output: `release/BelarusChampClicker-Windows-x64/` and `release/BelarusChampClicker-Windows-x64.zip`
 
-Users extract the ZIP and run `Install.cmd`. See `release/README.txt`.
+Users extract the ZIP and run `Install.cmd`. See `packaging/README.txt`.
 
 ## Usage
 
@@ -86,4 +89,6 @@ Default delay: **50 ms**. If a game misses clicks, try **50–100 ms**.
 | `clicker/gui/status_badge.go` | ON / OFF / PAUSE indicator |
 | `clicker/gui/server.go` | Embedded VIIPER lifecycle |
 | `clicker/runner/runner.go` | Click loop, End-key pause |
+| `packaging/` | Install/Uninstall scripts and user READMEs |
+| `release/` | Generated folder + ZIP (`package.ps1`) |
 | `VIIPER/` | Upstream VIIPER (`replace` in `clicker/go.mod`) |

@@ -21,7 +21,7 @@ Uninstall
 ---------
 
 1. Double-click Uninstall.cmd
-   (click Yes if Windows asks for permission)
+   (click Yes if Windows asks for permission; no window should appear)
 
 2. Restart your PC if asked
 
