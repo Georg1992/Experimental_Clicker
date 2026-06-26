@@ -61,9 +61,9 @@ type guiApp struct {
 	spKeyVK         int32
 	binding         bool
 	autopotBinding  bool
-	lastLoggedDelay int
-	lastLoggedHPThreshold int
-	lastLoggedSPThreshold int
+	lastLoggedDelay         int
+	lastAppliedHPThreshold  int
+	lastAppliedSPThreshold  int
 }
 
 func main() {
@@ -181,6 +181,10 @@ func (a *guiApp) createWindow() error {
 		return err
 	}
 
+	tabs.CurrentIndexChanged().Attach(a.finishThresholdInput)
+
+	mw.Deactivating().Attach(a.finishThresholdInput)
+
 	logLabel, err := walk.NewLabel(mw)
 	if err != nil {
 		return err
@@ -200,7 +204,7 @@ func (a *guiApp) createWindow() error {
 	if err := a.logList.SetModel(a.logItems); err != nil {
 		return err
 	}
-
+	a.wireThresholdBlurOnClick(mw)
 	a.setStarted(false)
 
 	mw.Closing().Attach(func(canceled *bool, reason walk.CloseReason) {
@@ -217,13 +221,11 @@ func (a *guiApp) appendLog(line string) {
 		return
 	}
 	stamped := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
-	a.logList.Synchronize(func() {
-		a.logItems = append(a.logItems, stamped)
-		_ = a.logList.SetModel(a.logItems)
-		if len(a.logItems) > 0 {
-			_ = a.logList.SetCurrentIndex(len(a.logItems) - 1)
-		}
-	})
+	a.logItems = append(a.logItems, stamped)
+	_ = a.logList.SetModel(a.logItems)
+	if len(a.logItems) > 0 {
+		_ = a.logList.SetCurrentIndex(len(a.logItems) - 1)
+	}
 }
 
 func (a *guiApp) isStarted() bool {
@@ -467,6 +469,7 @@ func (a *guiApp) onStart() {
 	a.mu.Unlock()
 
 	a.startAutoPotRunner(autopotCfg)
+	a.seedAppliedThresholds(autopotCfg)
 	a.startTimerKeyRunner(timerCfg)
 	a.setStarted(true)
 	a.appendLog("Started")

@@ -183,7 +183,7 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRead, refreshed bool) {
 	bars = a.mappedBars()
 	hp, sp = ReadMappedBars(img, bars)
-	if NeedsRemap(bars, hp, sp) {
+	if NeedsRemap(img, bars, hp, sp) {
 		mapped, err := RefreshBarPair(img)
 		if err == nil {
 			a.setMappedBars(mapped)

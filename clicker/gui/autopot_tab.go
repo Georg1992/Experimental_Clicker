@@ -65,9 +65,9 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	if err := a.hpThresholdEdit.SetText("50"); err != nil {
 		return err
 	}
-	a.lastLoggedHPThreshold = 50
+	a.lastAppliedHPThreshold = 50
 	a.hpThresholdEdit.TextChanged().Attach(a.syncAutoPotSettings)
-	a.hpThresholdEdit.EditingFinished().Attach(a.logAutoPotThresholdsIfChanged)
+	a.hpThresholdEdit.EditingFinished().Attach(a.syncAutoPotSettings)
 
 	hpKeyLabel, err := walk.NewLabel(hpGB)
 	if err != nil {
@@ -145,9 +145,9 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	if err := a.spThresholdEdit.SetText("30"); err != nil {
 		return err
 	}
-	a.lastLoggedSPThreshold = 30
+	a.lastAppliedSPThreshold = 30
 	a.spThresholdEdit.TextChanged().Attach(a.syncAutoPotSettings)
-	a.spThresholdEdit.EditingFinished().Attach(a.logAutoPotThresholdsIfChanged)
+	a.spThresholdEdit.EditingFinished().Attach(a.syncAutoPotSettings)
 
 	spKeyLabel, err := walk.NewLabel(spGB)
 	if err != nil {
@@ -215,11 +215,36 @@ func (a *guiApp) syncAutoPotSettings() {
 
 	if r != nil && r.Running() {
 		r.UpdateSettings(cfg)
+		a.logAppliedThresholds(cfg)
 		return
 	}
 
-	if a.isStarted() {
-		a.startAutoPotRunner(cfg)
+	if !a.isStarted() {
+		return
+	}
+
+	a.startAutoPotRunner(cfg)
+	a.mu.Lock()
+	r = a.autopotRunner
+	a.mu.Unlock()
+	if r != nil && r.Running() {
+		a.logAppliedThresholds(cfg)
+	}
+}
+
+func (a *guiApp) seedAppliedThresholds(cfg runner.AutoPotConfig) {
+	a.lastAppliedHPThreshold = cfg.HPThreshold
+	a.lastAppliedSPThreshold = cfg.SPThreshold
+}
+
+func (a *guiApp) logAppliedThresholds(cfg runner.AutoPotConfig) {
+	if cfg.HPThreshold != a.lastAppliedHPThreshold {
+		a.lastAppliedHPThreshold = cfg.HPThreshold
+		a.appendLog(fmt.Sprintf("AutoPot HP threshold: %d%%", cfg.HPThreshold))
+	}
+	if cfg.SPThreshold != a.lastAppliedSPThreshold {
+		a.lastAppliedSPThreshold = cfg.SPThreshold
+		a.appendLog(fmt.Sprintf("AutoPot SP threshold: %d%%", cfg.SPThreshold))
 	}
 }
 
@@ -251,22 +276,57 @@ func (a *guiApp) onClearSPKey() {
 	a.syncAutoPotSettings()
 }
 
+func (a *guiApp) normalizeThresholdEdit(edit *walk.LineEdit, lastApplied int) {
+	if edit == nil {
+		return
+	}
+	if _, ok := a.parseThreshold(edit); !ok {
+		edit.SetText(strconv.Itoa(lastApplied))
+	}
+}
+
+func (a *guiApp) blurThresholdEdits() {
+	if a.mainWindow != nil {
+		_ = a.mainWindow.SetFocus()
+	}
+}
+
+func (a *guiApp) finishThresholdInput() {
+	a.normalizeThresholdEdit(a.hpThresholdEdit, a.lastAppliedHPThreshold)
+	a.normalizeThresholdEdit(a.spThresholdEdit, a.lastAppliedSPThreshold)
+	a.syncAutoPotSettings()
+	a.blurThresholdEdits()
+}
+
+func (a *guiApp) wireThresholdBlurOnClick(container walk.Container) {
+	if container == nil {
+		return
+	}
+	children := container.Children()
+	if children == nil {
+		return
+	}
+	for i := 0; i < children.Len(); i++ {
+		child := children.At(i)
+		if child == a.hpThresholdEdit || child == a.spThresholdEdit || child == a.logList {
+			continue
+		}
+		if win, ok := child.(walk.Window); ok {
+			win.MouseDown().Attach(func(x, y int, button walk.MouseButton) {
+				a.finishThresholdInput()
+			})
+		}
+		if c, ok := child.(walk.Container); ok {
+			a.wireThresholdBlurOnClick(c)
+		}
+	}
+}
+
 func (a *guiApp) thresholdPercent(edit *walk.LineEdit, fallback int) int {
 	if v, ok := a.parseThreshold(edit); ok {
 		return v
 	}
 	return fallback
-}
-
-func (a *guiApp) logAutoPotThresholdsIfChanged() {
-	if hp, ok := a.parseThreshold(a.hpThresholdEdit); ok && hp != a.lastLoggedHPThreshold {
-		a.lastLoggedHPThreshold = hp
-		a.appendLog(fmt.Sprintf("HP threshold: %d%%", hp))
-	}
-	if sp, ok := a.parseThreshold(a.spThresholdEdit); ok && sp != a.lastLoggedSPThreshold {
-		a.lastLoggedSPThreshold = sp
-		a.appendLog(fmt.Sprintf("SP threshold: %d%%", sp))
-	}
 }
 
 func (a *guiApp) parseThreshold(edit *walk.LineEdit) (int, bool) {

@@ -155,6 +155,10 @@ func ReadHPFill(img image.Image, hp Rect) BarRead {
 	if hp.W < 1 || hp.H < 1 {
 		return BarRead{Found: false}
 	}
+	hp = trimBarEdges(img, hp, true)
+	if hp.W < 1 {
+		return BarRead{Found: false}
+	}
 	best := BarRead{Found: true, FullWidth: hp.W}
 	for row := 0; row < hp.H; row++ {
 		br := readBarFillSingleRow(img, hp.X, hp.Y+row, hp.W, isHPFillRead)
@@ -183,11 +187,42 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 	if sp.W < 1 || sp.H < 1 {
 		return BarRead{Found: false}
 	}
+	sp = trimBarEdges(img, sp, false)
+	if sp.W < 1 {
+		return BarRead{Found: false}
+	}
 	row := sp.Y + sp.H - 1
 	return readBarFillSingleRow(img, sp.X, row, sp.W, isSPFill)
 }
 
-func NeedsRemap(bars MappedBars, hp, sp BarRead) bool {
+func trimBarEdges(img image.Image, r Rect, hpBar bool) Rect {
+	y := r.Y + r.H/2
+	for r.W > 0 {
+		rp, gp, bp := pixelAt(img, r.X, y)
+		if barEdgePixel(rp, gp, bp, hpBar) {
+			break
+		}
+		r.X++
+		r.W--
+	}
+	for r.W > 0 {
+		rp, gp, bp := pixelAt(img, r.X+r.W-1, y)
+		if barEdgePixel(rp, gp, bp, hpBar) {
+			break
+		}
+		r.W--
+	}
+	return r
+}
+
+func barEdgePixel(r, g, b uint8, hpBar bool) bool {
+	if hpBar {
+		return IsHPPixel(r, g, b) || isHPTrack(r, g, b)
+	}
+	return IsSPPixel(r, g, b) || isSPFill(r, g, b) || isHPTrack(r, g, b)
+}
+
+func NeedsRemap(img image.Image, bars MappedBars, hp, sp BarRead) bool {
 	if !bars.Valid {
 		return true
 	}
@@ -197,7 +232,24 @@ func NeedsRemap(bars MappedBars, hp, sp BarRead) bool {
 	if !hp.Found || !sp.Found {
 		return true
 	}
+	if !barAnchorValid(img, bars.HP, true) || !barAnchorValid(img, bars.SP, false) {
+		return true
+	}
 	return false
+}
+
+func barAnchorValid(img image.Image, r Rect, hpBar bool) bool {
+	if r.W < 2 || r.H < 1 {
+		return true
+	}
+	y := r.Y + r.H/2
+	for _, xo := range []int{0, r.W / 2, r.W - 1} {
+		rp, gp, bp := pixelAt(img, r.X+xo, y)
+		if !barEdgePixel(rp, gp, bp, hpBar) {
+			return false
+		}
+	}
+	return true
 }
 
 func clampROI(bounds image.Rectangle, roi Rect) Rect {
