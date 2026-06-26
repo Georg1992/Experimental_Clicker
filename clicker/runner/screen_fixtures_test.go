@@ -29,6 +29,7 @@ func knownBarCases() map[string]screenBarCase {
 		"pp.png":      {file: "pp.png", hpUI: "1045/1290", spUI: "66/201", hpPct: 1045.0 / 1290.0 * 100, spPct: 66.0 / 201.0 * 100},
 		"tt.png":      {file: "tt.png", hpUI: "674/1290", spUI: "18/201", hpPct: 674.0 / 1290.0 * 100, spPct: 18.0 / 201.0 * 100},
 		"drift1.png":  {file: "drift1.png", hpUI: "1290/1290", spUI: "201/201", hpPct: 100, spPct: 100},
+		"drift1.2.png": {file: "drift1.2.png", hpUI: "1290/1290", spUI: "201/201", hpPct: 100, spPct: 100},
 		"drift2.png":  {file: "drift2.png", hpUI: "1290/1290", spUI: "201/201", hpPct: 100, spPct: 100},
 		"drift3.png":  {file: "drift3.png", hpUI: "1290/1290", spUI: "201/201", hpPct: 100, spPct: 100},
 		"drift4.png":  {file: "drift4.png", hpUI: "1290/1290", spUI: "201/201", hpPct: 100, spPct: 100},

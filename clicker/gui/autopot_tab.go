@@ -210,6 +210,7 @@ func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 func (a *guiApp) syncAutoPotSettings() {
 	cfg := a.autopotWanted()
 	a.mu.Lock()
+	cfg.Session = a.inputSession
 	r := a.autopotRunner
 	a.mu.Unlock()
 

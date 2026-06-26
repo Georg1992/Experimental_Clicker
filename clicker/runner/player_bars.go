@@ -191,8 +191,17 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 	if sp.W < 1 {
 		return BarRead{Found: false}
 	}
-	row := sp.Y + sp.H - 1
-	return readBarFillSingleRow(img, sp.X, row, sp.W, isSPFill)
+	if sp.H >= 3 {
+		return readBarFillSingleRow(img, sp.X, sp.Y+1, sp.W, isSPFill)
+	}
+	best := BarRead{Found: true, FullWidth: sp.W}
+	for row := 0; row < sp.H; row++ {
+		br := readBarFillSingleRow(img, sp.X, sp.Y+row, sp.W, isSPFill)
+		if br.FilledWidth > best.FilledWidth {
+			best = br
+		}
+	}
+	return best
 }
 
 func trimBarEdges(img image.Image, r Rect, hpBar bool) Rect {
@@ -235,21 +244,57 @@ func NeedsRemap(img image.Image, bars MappedBars, hp, sp BarRead) bool {
 	if !barAnchorValid(img, bars.HP, true) || !barAnchorValid(img, bars.SP, false) {
 		return true
 	}
+	if !barReadConsistent(img, bars.HP, true, hp) || !barReadConsistent(img, bars.SP, false, sp) {
+		return true
+	}
 	return false
+}
+
+func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
+	if !read.Found || r.W < 2 {
+		return false
+	}
+	fillW := bestFillWidth(img, r, hpBar)
+	if fillW == 0 {
+		return read.FilledWidth == 0
+	}
+	if read.FilledWidth == 0 {
+		return false
+	}
+	return read.FilledWidth >= fillW-2
+}
+
+func bestFillWidth(img image.Image, r Rect, hpBar bool) int {
+	isPixel := isHPFillRead
+	if !hpBar {
+		isPixel = isSPFill
+	}
+	best := 0
+	for row := 0; row < r.H; row++ {
+		br := readBarFillSingleRow(img, r.X, r.Y+row, r.W, isPixel)
+		if br.FilledWidth > best {
+			best = br.FilledWidth
+		}
+	}
+	return best
 }
 
 func barAnchorValid(img image.Image, r Rect, hpBar bool) bool {
 	if r.W < 2 || r.H < 1 {
 		return true
 	}
-	y := r.Y + r.H/2
-	for _, xo := range []int{0, r.W / 2, r.W - 1} {
-		rp, gp, bp := pixelAt(img, r.X+xo, y)
+	for row := 0; row < r.H; row++ {
+		y := r.Y + row
+		rp, gp, bp := pixelAt(img, r.X+r.W/2, y)
 		if !barEdgePixel(rp, gp, bp, hpBar) {
-			return false
+			continue
+		}
+		rowRect := Rect{X: r.X, Y: y, W: r.W, H: 1}
+		if bestFillWidth(img, rowRect, hpBar) >= minRunWidth {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func clampROI(bounds image.Rectangle, roi Rect) Rect {

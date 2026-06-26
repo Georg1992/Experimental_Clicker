@@ -54,6 +54,12 @@ func (a *AutoPotRunner) Running() bool {
 func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
 	cfg.applyDefaults()
 	a.liveMu.Lock()
+	if cfg.Session == nil {
+		cfg.Session = a.live.Session
+	}
+	if cfg.Log == nil {
+		cfg.Log = a.live.Log
+	}
 	a.live = cfg
 	a.liveMu.Unlock()
 }
@@ -190,6 +196,9 @@ func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRe
 			bars = mapped
 			hp, sp = ReadMappedBars(img, bars)
 			refreshed = true
+		} else {
+			a.setMappedBars(MappedBars{})
+			return MappedBars{}, BarRead{}, BarRead{}, false
 		}
 	}
 	return bars, hp, sp, refreshed
