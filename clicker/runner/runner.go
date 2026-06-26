@@ -6,8 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Alia5/VIIPER/device/keyboard"
-	"github.com/Alia5/VIIPER/device/mouse"
 	"github.com/Alia5/VIIPER/viiperclient"
 )
 
@@ -19,26 +17,19 @@ const (
 )
 
 type Config struct {
-	APIAddr        string
-	TriggerVKs     []int32
-	DelayMs        int
-	MouseClick     bool
-	Log            func(string)
-	OnPauseChanged func(bool)
+	Session    *ViiperSession
+	TriggerVKs []int32
+	DelayMs    int
+	MouseClick bool
+	Log        func(string)
 }
 
 func (c *Config) applyDefaults() {
-	if c.APIAddr == "" {
-		c.APIAddr = DefaultAPIAddr
-	}
 	if c.DelayMs <= 0 {
 		c.DelayMs = DefaultDelayMs
 	}
 	if c.Log == nil {
 		c.Log = func(string) {}
-	}
-	if c.OnPauseChanged == nil {
-		c.OnPauseChanged = func(bool) {}
 	}
 }
 
@@ -53,9 +44,6 @@ type Runner struct {
 	liveTriggerVKs []int32
 	liveDelayMs    int
 	liveMouseClick bool
-
-	pauseMu sync.RWMutex
-	paused  bool
 }
 
 func New(cfg Config) *Runner {
@@ -75,6 +63,10 @@ func (r *Runner) Start() error {
 		r.mu.Unlock()
 		return fmt.Errorf("clicker already running")
 	}
+	if r.cfg.Session == nil {
+		r.mu.Unlock()
+		return fmt.Errorf("input session is required")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
@@ -83,7 +75,6 @@ func (r *Runner) Start() error {
 	r.liveDelayMs = r.cfg.DelayMs
 	r.liveMouseClick = r.cfg.MouseClick
 	r.done = make(chan struct{})
-	r.setPaused(false)
 	r.mu.Unlock()
 
 	go func() {
@@ -128,31 +119,6 @@ func (r *Runner) UpdateSettings(triggerVKs []int32, delayMs int, mouseClick bool
 	r.liveMu.Unlock()
 }
 
-func (r *Runner) Paused() bool {
-	r.pauseMu.RLock()
-	defer r.pauseMu.RUnlock()
-	return r.paused
-}
-
-func (r *Runner) setPaused(paused bool) {
-	r.pauseMu.Lock()
-	changed := r.paused != paused
-	r.paused = paused
-	r.pauseMu.Unlock()
-	if changed {
-		r.cfg.OnPauseChanged(paused)
-	}
-}
-
-func (r *Runner) togglePaused() bool {
-	r.pauseMu.Lock()
-	r.paused = !r.paused
-	paused := r.paused
-	r.pauseMu.Unlock()
-	r.cfg.OnPauseChanged(paused)
-	return paused
-}
-
 func (r *Runner) settings() ([]int32, time.Duration, bool) {
 	r.liveMu.RLock()
 	delayMs := r.liveDelayMs
@@ -169,119 +135,44 @@ func (r *Runner) log(msg string) {
 }
 
 func (r *Runner) run(ctx context.Context) {
-	r.log("Setting up...")
+	session := r.cfg.Session
 
-	api := viiperclient.New(r.cfg.APIAddr)
-
-	ping, err := api.PingCtx(ctx)
-	if err != nil {
-		r.log(fmt.Sprintf("Connection failed: %v", err))
-		return
-	}
-	_ = ping
-	r.log("Connected")
-
-	busID, createdBus, err := ensureBus(ctx, api, noopLog)
-	if err != nil {
-		r.log(fmt.Sprintf("Device bus setup failed: %v", err))
-		return
-	}
-
-	keyStream, keyDev, err := api.AddDeviceAndConnect(ctx, busID, "keyboard", nil)
-	if err != nil {
-		r.log(fmt.Sprintf("Keyboard setup failed: %v", err))
-		cleanupBus(ctx, api, busID, createdBus, noopLog)
-		return
-	}
-	defer keyStream.Close() //nolint:errcheck
-	_ = keyDev
-	r.log("Keyboard ready")
-
-	mouseStream, mouseDev, err := api.AddDeviceAndConnect(ctx, busID, "mouse", nil)
-	if err != nil {
-		r.log(fmt.Sprintf("Mouse setup failed: %v", err))
-		cleanupDevice(ctx, api, keyStream.BusID, keyStream.DevID, noopLog)
-		cleanupBus(ctx, api, busID, createdBus, noopLog)
-		return
-	}
-	defer mouseStream.Close() //nolint:errcheck
-	_ = mouseDev
-	defer releaseAll(keyStream, mouseStream)
-	r.log("Mouse ready")
-
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		cleanupDevice(cleanupCtx, api, keyStream.BusID, keyStream.DevID, noopLog)
-		cleanupDevice(cleanupCtx, api, mouseStream.BusID, mouseStream.DevID, noopLog)
-		cleanupBus(cleanupCtx, api, busID, createdBus, noopLog)
-	}()
-
-	triggerVKs, delay, mouseClick := r.settings()
-	r.log(fmt.Sprintf("Trigger keys: %s", KeysText(triggerVKs)))
-	r.log(fmt.Sprintf("Delay: %d ms", delay.Milliseconds()))
-	if mouseClick {
-		r.log("Mode: key + mouse click")
-	} else {
-		r.log("Mode: key only")
-	}
-	if len(triggerVKs) == 0 {
-		r.log("Add trigger keys in the GUI — you can do this before or after launching the game")
-	}
-	r.log("Hold a trigger key to run the loop. End pauses clicking. Stop turns off the clicker.")
-
-	pauseKeyDown := false
 	for {
 		if ctx.Err() != nil {
-			r.log("Clicker stopped")
 			return
 		}
 
-		if PollKeyToggle(&pauseKeyDown, PauseVK) {
-			if r.togglePaused() {
-				r.log("Paused (End to resume)")
-			} else {
-				r.log("Resumed")
-			}
-		}
-
-		if r.Paused() {
+		if session.Paused() {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 
-		triggerVKs, delay, _ = r.settings()
+		triggerVKs, delay, mouseClick := r.settings()
 		if !TriggerHeld(triggerVKs) {
 			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 
 		triggerVK, _ := ActiveTrigger(triggerVKs)
-		r.log(fmt.Sprintf("Loop running (%s)", KeyName(triggerVK)))
 
-		for TriggerHeld(triggerVKs) && !r.Paused() {
+		for TriggerHeld(triggerVKs) && !session.Paused() {
 			if ctx.Err() != nil {
 				return
 			}
 
-		triggerVKs, delay, mouseClick = r.settings()
+			triggerVKs, delay, mouseClick = r.settings()
 			triggerVK, _ = ActiveTrigger(triggerVKs)
-			if err := runCycle(ctx, keyStream, mouseStream, triggerVK, triggerVKs, delay, mouseClick); err != nil {
+			if err := runCycle(ctx, session, triggerVK, triggerVKs, delay, mouseClick); err != nil {
 				if ctx.Err() != nil {
 					return
 				}
-				r.log(fmt.Sprintf("Loop step failed: %v", err))
+				r.log(fmt.Sprintf("Clicker loop failed: %v", err))
 				return
 			}
-			if !TriggerHeld(triggerVKs) || r.Paused() {
+			if !TriggerHeld(triggerVKs) || session.Paused() {
 				break
 			}
 		}
-
-		if r.Paused() {
-			continue
-		}
-		r.log("Loop paused")
 	}
 }
 
@@ -298,19 +189,6 @@ func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) 
 				busID = b
 			}
 		}
-
-		devices, err := api.DevicesListCtx(ctx, busID)
-		if err == nil {
-			for _, dev := range devices.Devices {
-				if _, err := api.DeviceRemoveCtx(ctx, busID, dev.DevID); err != nil {
-					log(fmt.Sprintf("failed to remove stale device %s: %v", dev.DevID, err))
-				} else {
-					log(fmt.Sprintf("removed stale device %d-%s", busID, dev.DevID))
-				}
-			}
-		}
-
-		log(fmt.Sprintf("using existing VIIPER bus %d", busID))
 		return busID, false, nil
 	}
 
@@ -322,35 +200,35 @@ func ensureBus(ctx context.Context, api *viiperclient.Client, log func(string)) 
 	return resp.BusID, true, nil
 }
 
-func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceStream, vk int32, triggerVKs []int32, delay time.Duration, mouseClick bool) error {
-	defer releaseAll(keyStream, mouseStream)
+func runCycle(ctx context.Context, session *ViiperSession, vk int32, triggerVKs []int32, delay time.Duration, mouseClick bool) error {
+	defer session.ReleaseAll()
 
 	step := time.Duration(StepHoldMs) * time.Millisecond
 
-	if err := keyDown(keyStream, vk); err != nil {
+	if err := session.KeyDown(vk); err != nil {
 		return err
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if !waitDelay(ctx, triggerVKs, delay) {
+	if !waitDelay(ctx, triggerVKs, delay, session.Paused) {
 		return ctx.Err()
 	}
 
 	if mouseClick {
-		if err := mouseDown(mouseStream); err != nil {
+		if err := session.MouseDown(); err != nil {
 			return err
 		}
 		sleep(ctx, step)
 	}
 
-	if err := keyUp(keyStream); err != nil {
+	if err := session.KeyUp(); err != nil {
 		return err
 	}
 
 	if mouseClick {
 		sleep(ctx, step)
-		if err := mouseUp(mouseStream); err != nil {
+		if err := session.MouseUp(); err != nil {
 			return err
 		}
 	}
@@ -359,7 +237,7 @@ func runCycle(ctx context.Context, keyStream, mouseStream *viiperclient.DeviceSt
 
 // waitDelay sleeps for delay. Trigger release ends the wait early but the cycle continues.
 // Returns false only when the clicker is stopped (context cancelled).
-func waitDelay(ctx context.Context, triggerVKs []int32, d time.Duration) bool {
+func waitDelay(ctx context.Context, triggerVKs []int32, d time.Duration, paused func() bool) bool {
 	if d <= 0 {
 		return ctx.Err() == nil
 	}
@@ -368,17 +246,15 @@ func waitDelay(ctx context.Context, triggerVKs []int32, d time.Duration) bool {
 		if ctx.Err() != nil {
 			return false
 		}
+		if paused != nil && paused() {
+			return true
+		}
 		if len(triggerVKs) > 0 && !TriggerHeld(triggerVKs) {
 			return true
 		}
 		time.Sleep(time.Millisecond)
 	}
 	return ctx.Err() == nil
-}
-
-func releaseAll(keyStream, mouseStream *viiperclient.DeviceStream) {
-	_ = keyUp(keyStream)
-	_ = mouseUp(mouseStream)
 }
 
 func sleep(ctx context.Context, d time.Duration) {
@@ -389,28 +265,6 @@ func sleep(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	case <-time.After(d):
 	}
-}
-
-func keyDown(stream *viiperclient.DeviceStream, vk int32) error {
-	hid, ok := VKToHID(vk)
-	if !ok {
-		return fmt.Errorf("unsupported trigger key %s", KeyName(vk))
-	}
-	press := keyboard.PressKey(hid)
-	return stream.WriteBinary(&press)
-}
-
-func keyUp(stream *viiperclient.DeviceStream) error {
-	release := keyboard.Release()
-	return stream.WriteBinary(&release)
-}
-
-func mouseDown(stream *viiperclient.DeviceStream) error {
-	return stream.WriteBinary(&mouse.InputState{Buttons: mouse.BtnLeft})
-}
-
-func mouseUp(stream *viiperclient.DeviceStream) error {
-	return stream.WriteBinary(&mouse.InputState{})
 }
 
 func cleanupDevice(ctx context.Context, api *viiperclient.Client, busID uint32, devID string, log func(string)) {

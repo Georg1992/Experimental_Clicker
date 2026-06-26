@@ -194,7 +194,6 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 
 func (a *guiApp) autopotConfig() runner.AutoPotConfig {
 	return runner.AutoPotConfig{
-		APIAddr:     runner.DefaultAPIAddr,
 		HPThreshold: a.thresholdPercent(a.hpThresholdEdit, 50),
 		SPThreshold: a.thresholdPercent(a.spThresholdEdit, 30),
 		HPKeyVK:     a.hpKeyVK,

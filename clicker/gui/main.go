@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -54,6 +55,7 @@ type guiApp struct {
 	runner          *runner.Runner
 	autopotRunner   *runner.AutoPotRunner
 	timerKeyRunner  *runner.TimerKeyRunner
+	inputSession    *runner.ViiperSession
 	triggerVKs      []int32
 	hpKeyVK         int32
 	spKeyVK         int32
@@ -76,8 +78,12 @@ func (a *guiApp) shutdown() {
 		a.mu.Lock()
 		r := a.runner
 		ap := a.autopotRunner
+		tk := a.timerKeyRunner
+		session := a.inputSession
 		a.runner = nil
 		a.autopotRunner = nil
+		a.timerKeyRunner = nil
+		a.inputSession = nil
 		a.mu.Unlock()
 
 		if r != nil {
@@ -87,6 +93,13 @@ func (a *guiApp) shutdown() {
 		if ap != nil {
 			ap.Stop()
 			ap.Wait()
+		}
+		if tk != nil {
+			tk.Stop()
+			tk.Wait()
+		}
+		if session != nil {
+			session.Close()
 		}
 
 		stopViiperServerIfStarted()
@@ -249,6 +262,12 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
 	}
 
 	cfg.Log = a.appendLog
+	a.mu.Lock()
+	cfg.Session = a.inputSession
+	a.mu.Unlock()
+	if cfg.Session == nil {
+		return
+	}
 	ap := runner.NewAutoPot(cfg)
 	if err := ap.Start(); err != nil {
 		a.appendLog(fmt.Sprintf("AutoPot start failed: %v", err))
@@ -257,6 +276,7 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
 	a.mu.Lock()
 	a.autopotRunner = ap
 	a.mu.Unlock()
+	a.appendLog("AutoPot started")
 }
 
 func (a *guiApp) setStarted(started bool) {
@@ -405,24 +425,36 @@ func (a *guiApp) onStart() {
 		a.appendLog("Ready")
 	}
 
+	session, err := runner.OpenViiperSession(context.Background(), runner.DefaultAPIAddr)
+	if err != nil {
+		a.mu.Unlock()
+		a.appendLog(fmt.Sprintf("Start failed: %v", err))
+		stopViiperServerIfStarted()
+		return
+	}
+	a.inputSession = session
+	session.SetOnPauseChanged(func(paused bool) {
+		if paused {
+			a.setClickerStatus(clickerStatusPaused)
+		} else {
+			a.setClickerStatus(clickerStatusRunning)
+		}
+	})
+	session.StartPauseWatcher(context.Background(), a.appendLog)
+
 	cfg := runner.Config{
-		APIAddr:    runner.DefaultAPIAddr,
+		Session:    session,
 		TriggerVKs: append([]int32(nil), a.triggerVKs...),
 		DelayMs:    a.delayMs(),
 		MouseClick: a.mouseClickCB.Checked(),
 		Log:        a.appendLog,
-		OnPauseChanged: func(paused bool) {
-			if paused {
-				a.setClickerStatus(clickerStatusPaused)
-			} else {
-				a.setClickerStatus(clickerStatusRunning)
-			}
-		},
 	}
 	a.runner = runner.New(cfg)
 	if err := a.runner.Start(); err != nil {
 		a.appendLog(fmt.Sprintf("Start failed: %v", err))
 		a.runner = nil
+		a.inputSession.Close()
+		a.inputSession = nil
 		a.mu.Unlock()
 		stopViiperServerIfStarted()
 		return
@@ -435,6 +467,7 @@ func (a *guiApp) onStart() {
 	a.startAutoPotRunner(autopotCfg)
 	a.startTimerKeyRunner(timerCfg)
 	a.setStarted(true)
+	a.appendLog("Started")
 }
 
 func (a *guiApp) onStop() {
@@ -442,9 +475,11 @@ func (a *guiApp) onStop() {
 	r := a.runner
 	ap := a.autopotRunner
 	tk := a.timerKeyRunner
+	session := a.inputSession
 	a.runner = nil
 	a.autopotRunner = nil
 	a.timerKeyRunner = nil
+	a.inputSession = nil
 	a.mu.Unlock()
 
 	a.setStarted(false)
@@ -462,6 +497,9 @@ func (a *guiApp) onStop() {
 		if tk != nil {
 			tk.Stop()
 			tk.Wait()
+		}
+		if session != nil {
+			session.Close()
 		}
 		stopViiperServerIfStarted()
 		a.mainWindow.Synchronize(func() {

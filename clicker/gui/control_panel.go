@@ -131,7 +131,7 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	if err != nil {
 		return err
 	}
-	if err := pauseCaption.SetText("Pause / resume: End"); err != nil {
+	if err := pauseCaption.SetText("Pause / resume all: End"); err != nil {
 		return err
 	}
 	pauseCaption.SetFont(hintFont)

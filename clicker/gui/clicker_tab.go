@@ -121,13 +121,18 @@ func (a *guiApp) buildClickerTab(page *walk.TabPage) error {
 	a.mouseClickCB.SetChecked(true)
 	a.mouseClickCB.CheckedChanged().Attach(func() {
 		a.syncRunnerSettings()
+		if a.mouseClickCB.Checked() {
+			a.appendLog("Mouse click: on")
+		} else {
+			a.appendLog("Mouse click: off")
+		}
 	})
 
 	configHint, err := walk.NewLabel(configGB)
 	if err != nil {
 		return err
 	}
-	if err := configHint.SetText("Available after Start. Hold mapped keys to click. End pauses. Stop turns off."); err != nil {
+	if err := configHint.SetText("After Start, add keys anytime — no restart needed. Hold mapped keys to click. End pauses everything. Stop turns off."); err != nil {
 		return err
 	}
 

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	"github.com/Alia5/VIIPER/viiperclient"
 )
 
 const (
@@ -21,15 +19,12 @@ type TimerSlot struct {
 }
 
 type TimerKeyConfig struct {
-	APIAddr string
+	Session *ViiperSession
 	Slots   [TimerKeySlotCount]TimerSlot
 	Log     func(string)
 }
 
 func (c *TimerKeyConfig) applyDefaults() {
-	if c.APIAddr == "" {
-		c.APIAddr = DefaultAPIAddr
-	}
 	for i := range c.Slots {
 		if c.Slots[i].IntervalMs <= 0 {
 			c.Slots[i].IntervalMs = DefaultTimerKeyIntervalMs
@@ -97,6 +92,10 @@ func (t *TimerKeyRunner) Start() error {
 		t.mu.Unlock()
 		return nil
 	}
+	if cfg.Session == nil {
+		t.mu.Unlock()
+		return fmt.Errorf("input session is required")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.cancel = cancel
@@ -141,54 +140,21 @@ func (t *TimerKeyRunner) log(msg string) {
 }
 
 func (t *TimerKeyRunner) run(ctx context.Context) {
-	t.log("Timer keys starting...")
-
-	api := viiperclient.New(t.cfg.APIAddr)
-	if _, err := api.PingCtx(ctx); err != nil {
-		t.log(fmt.Sprintf("Connection failed: %v", err))
-		return
-	}
-
-	busID, createdBus, err := ensureBus(ctx, api, noopLog)
-	if err != nil {
-		t.log(fmt.Sprintf("Device bus setup failed: %v", err))
-		return
-	}
-
-	keyStream, keyDev, err := api.AddDeviceAndConnect(ctx, busID, "keyboard", nil)
-	if err != nil {
-		t.log(fmt.Sprintf("Keyboard setup failed: %v", err))
-		cleanupBus(ctx, api, busID, createdBus, noopLog)
-		return
-	}
-	defer keyStream.Close() //nolint:errcheck
-	_ = keyDev
-	defer func() { _ = keyUp(keyStream) }()
-
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		cleanupDevice(cleanupCtx, api, keyStream.BusID, keyStream.DevID, noopLog)
-		cleanupBus(cleanupCtx, api, busID, createdBus, noopLog)
-	}()
-
-	cfg := t.settings()
-	for i, slot := range cfg.Slots {
-		if slot.Enabled && slot.KeyVK != 0 {
-			t.log(fmt.Sprintf("Timer %d: %s every %d ms", i+1, KeyName(slot.KeyVK), slot.IntervalMs))
-		}
-	}
+	session := t.cfg.Session
 
 	var lastSlots [TimerKeySlotCount]TimerSlot
 	var nextDue [TimerKeySlotCount]time.Time
 
 	for {
 		if ctx.Err() != nil {
-			t.log("Timer keys stopped")
 			return
 		}
+		if session.Paused() {
+			sleep(ctx, 10*time.Millisecond)
+			continue
+		}
 
-		cfg = t.settings()
+		cfg := t.settings()
 		now := time.Now()
 		var earliest time.Time
 		anyActive := false
@@ -212,7 +178,7 @@ func (t *TimerKeyRunner) run(ctx context.Context) {
 				nextDue[i] = now
 			}
 			if !now.Before(nextDue[i]) {
-				if err := tapKey(keyStream, slot.KeyVK); err != nil {
+				if err := session.TapKey(slot.KeyVK, autoPotKeyHold); err != nil {
 					t.log(fmt.Sprintf("Timer %d key %s failed: %v", i+1, KeyName(slot.KeyVK), err))
 					return
 				}

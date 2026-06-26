@@ -7,14 +7,12 @@ import (
 	"os"
 	"sync"
 	"time"
-
-	"github.com/Alia5/VIIPER/viiperclient"
 )
 
 const autoPotKeyHold = 1 * time.Millisecond
 
 type AutoPotConfig struct {
-	APIAddr     string
+	Session     *ViiperSession
 	HPThreshold int
 	SPThreshold int
 	HPKeyVK     int32
@@ -25,9 +23,6 @@ type AutoPotConfig struct {
 }
 
 func (c *AutoPotConfig) applyDefaults() {
-	if c.APIAddr == "" {
-		c.APIAddr = DefaultAPIAddr
-	}
 	if c.Log == nil {
 		c.Log = func(string) {}
 	}
@@ -43,6 +38,9 @@ type AutoPotRunner struct {
 
 	liveMu sync.RWMutex
 	live   AutoPotConfig
+
+	barsMu sync.RWMutex
+	bars   MappedBars
 }
 
 func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
@@ -69,6 +67,18 @@ func (a *AutoPotRunner) settings() AutoPotConfig {
 	return a.live
 }
 
+func (a *AutoPotRunner) mappedBars() MappedBars {
+	a.barsMu.RLock()
+	defer a.barsMu.RUnlock()
+	return a.bars
+}
+
+func (a *AutoPotRunner) setMappedBars(bars MappedBars) {
+	a.barsMu.Lock()
+	a.bars = bars
+	a.barsMu.Unlock()
+}
+
 func (a *AutoPotRunner) Start() error {
 	a.mu.Lock()
 	if a.running {
@@ -84,6 +94,10 @@ func (a *AutoPotRunner) Start() error {
 	if cfg.SPEnabled && cfg.SPKeyVK == 0 {
 		a.mu.Unlock()
 		return fmt.Errorf("SP potion key is not set")
+	}
+	if cfg.Session == nil {
+		a.mu.Unlock()
+		return fmt.Errorf("input session is required")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,95 +143,39 @@ func (a *AutoPotRunner) log(msg string) {
 }
 
 func (a *AutoPotRunner) run(ctx context.Context) {
-	a.log("AutoPot starting...")
-
-	api := viiperclient.New(a.cfg.APIAddr)
-	if _, err := api.PingCtx(ctx); err != nil {
-		a.log(fmt.Sprintf("Connection failed: %v", err))
-		return
-	}
-
-	busID, createdBus, err := ensureBus(ctx, api, noopLog)
-	if err != nil {
-		a.log(fmt.Sprintf("Device bus setup failed: %v", err))
-		return
-	}
-
-	keyStream, keyDev, err := api.AddDeviceAndConnect(ctx, busID, "keyboard", nil)
-	if err != nil {
-		a.log(fmt.Sprintf("Keyboard setup failed: %v", err))
-		cleanupBus(ctx, api, busID, createdBus, noopLog)
-		return
-	}
-	defer keyStream.Close() //nolint:errcheck
-	_ = keyDev
-	defer func() { _ = keyUp(keyStream) }()
-
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		cleanupDevice(cleanupCtx, api, keyStream.BusID, keyStream.DevID, noopLog)
-		cleanupBus(cleanupCtx, api, busID, createdBus, noopLog)
-	}()
-
-	cfg := a.settings()
-	if cfg.HPEnabled {
-		a.log(fmt.Sprintf("HP: key %s, trigger below %d%%", KeyName(cfg.HPKeyVK), cfg.HPThreshold))
-	}
-	if cfg.SPEnabled {
-		a.log(fmt.Sprintf("SP: key %s, trigger below %d%%", KeyName(cfg.SPKeyVK), cfg.SPThreshold))
-	}
-
+	session := a.cfg.Session
 	debugSave := os.Getenv("BAR_SEARCH_DEBUG") != ""
-	loggedROI := false
-	lastHPLog := ""
-	lastSPLog := ""
 
 	for {
 		if ctx.Err() != nil {
-			a.log("AutoPot stopped")
 			return
 		}
+		if session.Paused() {
+			sleep(ctx, 10*time.Millisecond)
+			continue
+		}
 
-		img, searchROI, err := CapturePlayerBarSearch()
+		img, _, err := CapturePlayerBarSearch()
 		if err != nil {
-			a.log(fmt.Sprintf("Capture failed: %v", err))
 			sleep(ctx, 50*time.Millisecond)
 			continue
 		}
 
-		if !loggedROI {
-			a.log(fmt.Sprintf("Search ROI screen (%d,%d) %dx%d", searchROI.X, searchROI.Y, searchROI.W, searchROI.H))
-			loggedROI = true
-		}
-
-		hp := FindHPBar(img)
-		sp := FindSPBar(img)
-
+		bars, hp, sp := a.readBars(img)
 		if debugSave {
-			_ = SaveBarSearchDebug(img, hp, sp, "bar_search_debug.png")
+			_ = SaveMappedBarsDebug(img, bars, "bar_search_debug.png")
+			a.log(FormatMappedBarsLog(img, bars, hp, sp))
 		}
 
-		hpLog := FormatBarLog("HP", hp)
-		if hpLog != lastHPLog {
-			a.log(hpLog)
-			lastHPLog = hpLog
-		}
-		spLog := FormatBarLog("SP", sp)
-		if spLog != lastSPLog {
-			a.log(spLog)
-			lastSPLog = spLog
-		}
-
-		cfg = a.settings()
+		cfg := a.settings()
 
 		if cfg.HPEnabled && hp.Found && hp.Percent < float64(cfg.HPThreshold) {
-			a.healUntil(ctx, keyStream, cfg.HPKeyVK, cfg.HPThreshold, FindHPBar)
+			a.healUntil(ctx, session, cfg.HPKeyVK, cfg.HPThreshold, true)
 			continue
 		}
 
 		if cfg.SPEnabled && sp.Found && sp.Percent < float64(cfg.SPThreshold) {
-			a.healUntil(ctx, keyStream, cfg.SPKeyVK, cfg.SPThreshold, FindSPBar)
+			a.healUntil(ctx, session, cfg.SPKeyVK, cfg.SPThreshold, false)
 			continue
 		}
 
@@ -225,22 +183,40 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 	}
 }
 
-func (a *AutoPotRunner) healUntil(ctx context.Context, keyStream *viiperclient.DeviceStream, vk int32, threshold int, read func(image.Image) Bar) {
+func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRead) {
+	bars = a.mappedBars()
+	hp, sp = ReadMappedBars(img, bars)
+	if NeedsRemap(bars, hp, sp) {
+		mapped, err := MapPlayerBars(img)
+		if err == nil {
+			a.setMappedBars(mapped)
+			bars = mapped
+			hp, sp = ReadMappedBars(img, bars)
+		}
+	}
+	return bars, hp, sp
+}
+
+func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, vk int32, threshold int, hpBar bool) {
 	for {
 		if ctx.Err() != nil {
 			return
+		}
+		if session.Paused() {
+			sleep(ctx, 10*time.Millisecond)
+			continue
 		}
 		img, _, err := CapturePlayerBarSearch()
 		if err != nil {
 			sleep(ctx, 10*time.Millisecond)
 			continue
 		}
-		bar := read(img)
-		if !bar.Found || bar.Percent >= float64(threshold) {
+		_, read := a.readOneBar(img, hpBar)
+		if !read.Found || read.Percent >= float64(threshold) {
 			return
 		}
-		before := bar.Percent
-		if err := tapKey(keyStream, vk); err != nil {
+		before := read.Percent
+		if err := session.TapKey(vk, autoPotKeyHold); err != nil {
 			a.log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
 			return
 		}
@@ -248,25 +224,29 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, keyStream *viiperclient.D
 			if ctx.Err() != nil {
 				return
 			}
+			if session.Paused() {
+				sleep(ctx, 10*time.Millisecond)
+				continue
+			}
 			img, _, err := CapturePlayerBarSearch()
 			if err != nil {
 				continue
 			}
-			bar := read(img)
-			if !bar.Found || bar.Percent >= float64(threshold) {
+			_, read := a.readOneBar(img, hpBar)
+			if !read.Found || read.Percent >= float64(threshold) {
 				return
 			}
-			if bar.Percent > before {
+			if read.Percent > before {
 				break
 			}
 		}
 	}
 }
 
-func tapKey(stream *viiperclient.DeviceStream, vk int32) error {
-	if err := keyDown(stream, vk); err != nil {
-		return err
+func (a *AutoPotRunner) readOneBar(img image.Image, hpBar bool) (MappedBars, BarRead) {
+	bars, hp, sp := a.readBars(img)
+	if hpBar {
+		return bars, hp
 	}
-	time.Sleep(autoPotKeyHold)
-	return keyUp(stream)
+	return bars, sp
 }

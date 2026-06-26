@@ -194,8 +194,7 @@ func (a *guiApp) updateTimerAddButton() {
 
 func (a *guiApp) timerKeyConfig() runner.TimerKeyConfig {
 	cfg := runner.TimerKeyConfig{
-		APIAddr: runner.DefaultAPIAddr,
-		Log:     a.appendLog,
+		Log: a.appendLog,
 	}
 	for i := 0; i < a.timerVisibleCount; i++ {
 		cfg.Slots[i] = runner.TimerSlot{
@@ -286,6 +285,12 @@ func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig) {
 	}
 
 	cfg.Log = a.appendLog
+	a.mu.Lock()
+	cfg.Session = a.inputSession
+	a.mu.Unlock()
+	if cfg.Session == nil {
+		return
+	}
 	tk := runner.NewTimerKey(cfg)
 	if err := tk.Start(); err != nil {
 		a.appendLog(fmt.Sprintf("Timer keys start failed: %v", err))
@@ -294,6 +299,7 @@ func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig) {
 	a.mu.Lock()
 	a.timerKeyRunner = tk
 	a.mu.Unlock()
+	a.appendLog("Timer keys started")
 }
 
 func (a *guiApp) clearTimerKey(index int) {
