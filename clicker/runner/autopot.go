@@ -161,10 +161,10 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 			continue
 		}
 
-		bars, hp, sp := a.readBars(img)
+		bars, hp, sp, refreshed := a.readBars(img)
 		if debugSave {
 			_ = SaveMappedBarsDebug(img, bars, "bar_search_debug.png")
-			a.log(FormatMappedBarsLog(img, bars, hp, sp))
+			a.log(FormatMappedBarsLog(img, bars, hp, sp, refreshed))
 		}
 
 		cfg := a.settings()
@@ -183,18 +183,19 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 	}
 }
 
-func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRead) {
+func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRead, refreshed bool) {
 	bars = a.mappedBars()
 	hp, sp = ReadMappedBars(img, bars)
 	if NeedsRemap(bars, hp, sp) {
-		mapped, err := MapPlayerBars(img)
+		mapped, err := RefreshBarPair(img)
 		if err == nil {
 			a.setMappedBars(mapped)
 			bars = mapped
 			hp, sp = ReadMappedBars(img, bars)
+			refreshed = true
 		}
 	}
-	return bars, hp, sp
+	return bars, hp, sp, refreshed
 }
 
 func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, vk int32, threshold int, hpBar bool) {
@@ -244,7 +245,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 }
 
 func (a *AutoPotRunner) readOneBar(img image.Image, hpBar bool) (MappedBars, BarRead) {
-	bars, hp, sp := a.readBars(img)
+	bars, hp, sp, _ := a.readBars(img)
 	if hpBar {
 		return bars, hp
 	}

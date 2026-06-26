@@ -66,7 +66,9 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	if err := a.hpThresholdEdit.SetText("50"); err != nil {
 		return err
 	}
+	a.lastLoggedHPThreshold = 50
 	a.hpThresholdEdit.TextChanged().Attach(a.syncAutoPotSettings)
+	a.hpThresholdEdit.EditingFinished().Attach(a.logAutoPotThresholdsIfChanged)
 
 	hpKeyLabel, err := walk.NewLabel(hpGB)
 	if err != nil {
@@ -144,7 +146,9 @@ func (a *guiApp) buildAutoPotTab(page *walk.TabPage) error {
 	if err := a.spThresholdEdit.SetText("30"); err != nil {
 		return err
 	}
+	a.lastLoggedSPThreshold = 30
 	a.spThresholdEdit.TextChanged().Attach(a.syncAutoPotSettings)
+	a.spThresholdEdit.EditingFinished().Attach(a.logAutoPotThresholdsIfChanged)
 
 	spKeyLabel, err := walk.NewLabel(spGB)
 	if err != nil {
@@ -257,6 +261,28 @@ func (a *guiApp) thresholdPercent(edit *walk.LineEdit, fallback int) int {
 		return fallback
 	}
 	return v
+}
+
+func (a *guiApp) logAutoPotThresholdsIfChanged() {
+	if hp, ok := a.parseThresholdEdit(a.hpThresholdEdit); ok && hp != a.lastLoggedHPThreshold {
+		a.lastLoggedHPThreshold = hp
+		a.appendLog(fmt.Sprintf("HP threshold: %d%%", hp))
+	}
+	if sp, ok := a.parseThresholdEdit(a.spThresholdEdit); ok && sp != a.lastLoggedSPThreshold {
+		a.lastLoggedSPThreshold = sp
+		a.appendLog(fmt.Sprintf("SP threshold: %d%%", sp))
+	}
+}
+
+func (a *guiApp) parseThresholdEdit(edit *walk.LineEdit) (int, bool) {
+	if edit == nil {
+		return 0, false
+	}
+	v, err := strconv.Atoi(edit.Text())
+	if err != nil || v < 1 || v > 99 {
+		return 0, false
+	}
+	return v, true
 }
 
 func (a *guiApp) onBindHPKey() {

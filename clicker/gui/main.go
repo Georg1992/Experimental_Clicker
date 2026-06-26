@@ -62,6 +62,8 @@ type guiApp struct {
 	binding         bool
 	autopotBinding  bool
 	lastLoggedDelay int
+	lastLoggedHPThreshold int
+	lastLoggedSPThreshold int
 }
 
 func main() {
