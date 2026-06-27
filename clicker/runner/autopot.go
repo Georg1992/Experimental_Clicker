@@ -173,13 +173,19 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 		cfg := a.settings()
 
 		if cfg.HPEnabled && hp.Found && hp.Percent < float64(cfg.HPThreshold) {
-			a.healUntil(ctx, session, cfg.HPKeyVK, cfg.HPThreshold, true)
-			continue
+			_, hpPot := a.readBarForPot(img, true)
+			if hpPot.Found && hpPot.Percent < float64(cfg.HPThreshold) {
+				a.healUntil(ctx, session, true)
+				continue
+			}
 		}
 
 		if cfg.SPEnabled && sp.Found && sp.Percent < float64(cfg.SPThreshold) {
-			a.healUntil(ctx, session, cfg.SPKeyVK, cfg.SPThreshold, false)
-			continue
+			_, spPot := a.readBarForPot(img, false)
+			if spPot.Found && spPot.Percent < float64(cfg.SPThreshold) {
+				a.healUntil(ctx, session, false)
+				continue
+			}
 		}
 
 		sleep(ctx, KeyTapHold)
@@ -204,7 +210,20 @@ func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRe
 	return bars, hp, sp, refreshed
 }
 
-func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, vk int32, threshold int, hpBar bool) {
+func (a *AutoPotRunner) readBarForPot(img image.Image, hpBar bool) (MappedBars, BarRead) {
+	mapped, err := RefreshBarPair(img)
+	if err != nil {
+		return MappedBars{}, BarRead{}
+	}
+	a.setMappedBars(mapped)
+	hp, sp := ReadMappedBars(img, mapped)
+	if hpBar {
+		return mapped, hp
+	}
+	return mapped, sp
+}
+
+func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, hpBar bool) {
 	for {
 		if ctx.Err() != nil {
 			return
@@ -213,16 +232,26 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 			sleep(ctx, PollInterval)
 			continue
 		}
+		cfg := a.settings()
+		vk, threshold, ok := healTarget(cfg, hpBar)
+		if !ok {
+			return
+		}
 		img, _, err := CapturePlayerBarSearch()
 		if err != nil {
 			sleep(ctx, PollInterval)
 			continue
 		}
-		_, read := a.readOneBar(img, hpBar)
+		_, read := a.readBarForPot(img, hpBar)
 		if !read.Found || read.Percent >= float64(threshold) {
 			return
 		}
 		before := read.Percent
+		bar := "SP"
+		if hpBar {
+			bar = "HP"
+		}
+		a.log(fmt.Sprintf("%s pot at %.0f%% (threshold %d%%)", bar, before, threshold))
 		if err := session.TapKey(vk, KeyTapHold); err != nil {
 			a.log(fmt.Sprintf("Key %s failed: %v", KeyName(vk), err))
 			return
@@ -235,11 +264,16 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 				sleep(ctx, PollInterval)
 				continue
 			}
+			cfg := a.settings()
+			_, threshold, ok := healTarget(cfg, hpBar)
+			if !ok {
+				return
+			}
 			img, _, err := CapturePlayerBarSearch()
 			if err != nil {
 				continue
 			}
-			_, read := a.readOneBar(img, hpBar)
+			_, read := a.readBarForPot(img, hpBar)
 			if !read.Found || read.Percent >= float64(threshold) {
 				return
 			}
@@ -250,10 +284,15 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, v
 	}
 }
 
-func (a *AutoPotRunner) readOneBar(img image.Image, hpBar bool) (MappedBars, BarRead) {
-	bars, hp, sp, _ := a.readBars(img)
+func healTarget(cfg AutoPotConfig, hpBar bool) (vk int32, threshold int, ok bool) {
 	if hpBar {
-		return bars, hp
+		if !cfg.HPEnabled || cfg.HPKeyVK == 0 {
+			return 0, 0, false
+		}
+		return cfg.HPKeyVK, cfg.HPThreshold, true
 	}
-	return bars, sp
+	if !cfg.SPEnabled || cfg.SPKeyVK == 0 {
+		return 0, 0, false
+	}
+	return cfg.SPKeyVK, cfg.SPThreshold, true
 }
