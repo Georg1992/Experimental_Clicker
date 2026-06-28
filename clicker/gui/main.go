@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"experimental-clicker/runner"
+
 	"github.com/lxn/walk"
 )
 
@@ -24,47 +25,47 @@ type guiApp struct {
 	clickerTriggerVKs      [runner.ClickerSlotCount][]int32
 	clickerBindingSlot     int
 	clickerLastLoggedDelay [runner.ClickerSlotCount]int
-	startBtn                *walk.PushButton
-	stopBtn                 *walk.PushButton
-	statusBadge             *statusBadge
+	startBtn               *walk.PushButton
+	stopBtn                *walk.PushButton
+	statusBadge            *statusBadge
 
 	// Timer keys (clicker tab)
-	timerSlots         [runner.TimerKeySlotCount]timerSlotWidgets
-	timerKeyVKs        [runner.TimerKeySlotCount]int32
-	timerVisibleCount  int
-	timerAddBtn        *walk.PushButton
-	timerBindingSlot   int
+	timerSlots        [runner.TimerKeySlotCount]timerSlotWidgets
+	timerKeyVKs       [runner.TimerKeySlotCount]int32
+	timerVisibleCount int
+	timerAddBtn       *walk.PushButton
+	timerBindingSlot  int
 
 	// AutoPot tab
 	hpEnabledCB     *walk.CheckBox
-	spEnabledCB        *walk.CheckBox
-	hpThresholdEdit    *walk.LineEdit
-	spThresholdEdit    *walk.LineEdit
-	hpKeyLabel         *walk.Label
-	spKeyLabel         *walk.Label
-	hpBindBtn          *walk.PushButton
-	hpClearBtn         *walk.PushButton
-	spBindBtn          *walk.PushButton
-	spClearBtn         *walk.PushButton
+	spEnabledCB     *walk.CheckBox
+	hpThresholdEdit *walk.LineEdit
+	spThresholdEdit *walk.LineEdit
+	hpKeyLabel      *walk.Label
+	spKeyLabel      *walk.Label
+	hpBindBtn       *walk.PushButton
+	hpClearBtn      *walk.PushButton
+	spBindBtn       *walk.PushButton
+	spClearBtn      *walk.PushButton
 
 	// KeyChain tab
-	keyChainSlots        [runner.KeyChainSlotCount]keyChainSlotWidgets
-	keyChainKeyVKs       [runner.KeyChainSlotCount]int32
-	keyChainClearBtn     *walk.PushButton
-	keyChainBindingSlot  int
+	keyChainSlots       [runner.KeyChainSlotCount]keyChainSlotWidgets
+	keyChainKeyVKs      [runner.KeyChainSlotCount]int32
+	keyChainClearBtn    *walk.PushButton
+	keyChainBindingSlot int
 
-	mu              sync.Mutex
-	shutdownOnce    sync.Once
-	runner          *runner.Runner
-	autopotRunner   *runner.AutoPotRunner
-	timerKeyRunner  *runner.TimerKeyRunner
-	keyChainRunner  *runner.KeyChainRunner
-	inputSession    *runner.ViiperSession
-	hpKeyVK         int32
-	spKeyVK         int32
-	hpThreshold     int
-	spThreshold     int
-	autopotBinding  bool
+	mu             sync.Mutex
+	shutdownOnce   sync.Once
+	runner         *runner.Runner
+	autopotRunner  *runner.AutoPotRunner
+	timerKeyRunner *runner.TimerKeyRunner
+	keyChainRunner *runner.KeyChainRunner
+	inputSession   *runner.ViiperSession
+	hpKeyVK        int32
+	spKeyVK        int32
+	hpThreshold    int
+	spThreshold    int
+	autopotBinding bool
 }
 
 func main() {
