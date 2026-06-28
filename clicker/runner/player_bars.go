@@ -37,11 +37,11 @@ const (
 	spBlueR, spBlueG, spBlueB    = 25, 101, 225
 	fillTol                      = 50
 
-	// BarPairRecalInterval is how often cached HP/SP rects are refreshed while walking.
-	BarPairRecalDefaultRecal = 200 * time.Millisecond
+	// BarPairStableDrift is max HP/SP rect movement between two same-frame pair refreshes.
+	BarPairStableDrift = 2
+	// BarPositionMaxDrift is max rect movement allowed between timed pot confirmations.
+	BarPositionMaxDrift = 8
 )
-
-var BarPairRecalInterval = BarPairRecalDefaultRecal
 
 var ErrBarsNotFound = errors.New("player bars not found")
 
@@ -151,6 +151,22 @@ func ReadMappedBars(img image.Image, bars MappedBars) (hp BarRead, sp BarRead) {
 	return hp, sp
 }
 
+func normalizeBarRead(img image.Image, r Rect, hpBar bool, read BarRead) BarRead {
+	if !read.Found || r.W < 2 {
+		return read
+	}
+	if !barLooksFull(img, r, hpBar) {
+		return read
+	}
+	if read.FullWidth < 1 {
+		read.FullWidth = r.W
+	}
+	read.FilledWidth = read.FullWidth
+	read.Percent = 100
+	read.Found = true
+	return read
+}
+
 func ReadHPFill(img image.Image, hp Rect) BarRead {
 	if hp.W < 1 || hp.H < 1 {
 		return BarRead{Found: false}
@@ -167,9 +183,9 @@ func ReadHPFill(img image.Image, hp Rect) BarRead {
 		}
 	}
 	if best.FilledWidth == 0 {
-		return readBarFillSingleRow(img, hp.X, hp.Y, hp.W, isHPFillRead)
+		return normalizeBarRead(img, hp, true, readBarFillSingleRow(img, hp.X, hp.Y, hp.W, isHPFillRead))
 	}
-	return best
+	return normalizeBarRead(img, hp, true, best)
 }
 
 func isHPFillRead(r, g, b uint8) bool {
@@ -192,7 +208,7 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 		return BarRead{Found: false}
 	}
 	if sp.H >= 3 {
-		return readBarFillSingleRow(img, sp.X, sp.Y+1, sp.W, isSPFill)
+		return normalizeBarRead(img, sp, false, readBarFillSingleRow(img, sp.X, sp.Y+1, sp.W, isSPFill))
 	}
 	best := BarRead{Found: true, FullWidth: sp.W}
 	for row := 0; row < sp.H; row++ {
@@ -201,7 +217,7 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 			best = br
 		}
 	}
-	return best
+	return normalizeBarRead(img, sp, false, best)
 }
 
 func trimBarEdges(img image.Image, r Rect, hpBar bool) Rect {
@@ -231,28 +247,102 @@ func barEdgePixel(r, g, b uint8, hpBar bool) bool {
 	return IsSPPixel(r, g, b) || isSPFill(r, g, b) || isHPTrack(r, g, b)
 }
 
-func NeedsRemap(img image.Image, bars MappedBars, hp, sp BarRead) bool {
-	if !bars.Valid {
+func barsMisaligned(a, b MappedBars) bool {
+	if !a.Valid || !b.Valid {
 		return true
 	}
-	if time.Since(bars.LastMapped) > BarPairRecalInterval {
+	return rectDrifted(a.HP, b.HP, BarPairStableDrift) ||
+		rectDrifted(a.SP, b.SP, BarPairStableDrift)
+}
+
+func rectDrifted(a, b Rect, max int) bool {
+	if a.W < 1 || b.W < 1 {
 		return true
 	}
-	if !hp.Found || !sp.Found {
-		return true
+	return absInt(a.X-b.X) > max ||
+		absInt(a.Y-b.Y) > max ||
+		absInt(a.W-b.W) > max
+}
+
+func refreshStableBarPair(img image.Image) (MappedBars, bool) {
+	first, err := RefreshBarPair(img)
+	if err != nil {
+		return MappedBars{}, false
 	}
-	if !barAnchorValid(img, bars.HP, true) || !barAnchorValid(img, bars.SP, false) {
-		return true
+	second, err := RefreshBarPair(img)
+	if err != nil {
+		return MappedBars{}, false
 	}
-	if !barReadConsistent(img, bars.HP, true, hp) || !barReadConsistent(img, bars.SP, false, sp) {
-		return true
+	if barsMisaligned(first, second) {
+		return MappedBars{}, false
+	}
+	return second, true
+}
+
+func isBarEmptyPixel(r, g, b uint8, hpBar bool) bool {
+	if hpBar {
+		if IsHPPixel(r, g, b) || isHPFillRead(r, g, b) {
+			return false
+		}
+	} else if IsSPPixel(r, g, b) || isSPFill(r, g, b) {
+		return false
+	}
+	return isHPTrack(r, g, b) || isBarBackground(r, g, b)
+}
+
+func barRightHasEmptyTrack(img image.Image, r Rect, hpBar bool) bool {
+	if r.W < 4 || r.H < 1 {
+		return false
+	}
+	checkCols := r.W / 5
+	if checkCols < 3 {
+		checkCols = 3
+	}
+	if checkCols > 8 {
+		checkCols = 8
+	}
+	for row := 0; row < r.H; row++ {
+		y := r.Y + row
+		empty := 0
+		for col := r.W - checkCols; col < r.W; col++ {
+			rp, gp, bp := pixelAt(img, r.X+col, y)
+			if isBarEmptyPixel(rp, gp, bp, hpBar) {
+				empty++
+			}
+		}
+		if empty >= 2 {
+			return true
+		}
 	}
 	return false
+}
+
+func barLooksFull(img image.Image, r Rect, hpBar bool) bool {
+	if r.W < 2 {
+		return false
+	}
+	if barRightHasEmptyTrack(img, r, hpBar) {
+		return false
+	}
+	return bestFillWidth(img, r, hpBar) >= r.W-2
+}
+
+func barConfirmedNotFull(img image.Image, r Rect, hpBar bool, read BarRead) bool {
+	if !read.Found || !barReadConsistent(img, r, hpBar, read) {
+		return false
+	}
+	if barLooksFull(img, r, hpBar) || read.Percent >= 99 {
+		return false
+	}
+	return barRightHasEmptyTrack(img, r, hpBar)
 }
 
 func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
 	if !read.Found || r.W < 2 {
 		return false
+	}
+	if barLooksFull(img, r, hpBar) {
+		return true
 	}
 	fillW := bestFillWidth(img, r, hpBar)
 	if fillW == 0 {
@@ -261,10 +351,16 @@ func barReadConsistent(img image.Image, r Rect, hpBar bool, read BarRead) bool {
 	if read.FilledWidth == 0 {
 		return false
 	}
-	return read.FilledWidth >= fillW-2
+	if read.FilledWidth < fillW-2 {
+		return false
+	}
+	return read.FilledWidth <= fillW+1
 }
 
 func bestFillWidth(img image.Image, r Rect, hpBar bool) int {
+	if !hpBar && r.H >= 3 {
+		return readBarFillSingleRow(img, r.X, r.Y+1, r.W, isSPFill).FilledWidth
+	}
 	isPixel := isHPFillRead
 	if !hpBar {
 		isPixel = isSPFill
@@ -277,24 +373,6 @@ func bestFillWidth(img image.Image, r Rect, hpBar bool) int {
 		}
 	}
 	return best
-}
-
-func barAnchorValid(img image.Image, r Rect, hpBar bool) bool {
-	if r.W < 2 || r.H < 1 {
-		return true
-	}
-	for row := 0; row < r.H; row++ {
-		y := r.Y + row
-		rp, gp, bp := pixelAt(img, r.X+r.W/2, y)
-		if !barEdgePixel(rp, gp, bp, hpBar) {
-			continue
-		}
-		rowRect := Rect{X: r.X, Y: y, W: r.W, H: 1}
-		if bestFillWidth(img, rowRect, hpBar) >= minRunWidth {
-			return true
-		}
-	}
-	return false
 }
 
 func clampROI(bounds image.Rectangle, roi Rect) Rect {
@@ -930,8 +1008,7 @@ func FormatMappedBarsLog(img image.Image, bars MappedBars, hp, sp BarRead, refre
 		" w=" + itoa(scan.roi.W) + " h=" + itoa(scan.roi.H) + "\n" +
 		"screenCenter x=" + itoa(scan.screenCX) + " y=" + itoa(scan.screenCY) + "\n" +
 		"pairCenter x=" + itoa(scan.pairCX) + " y=" + itoa(scan.pairCY) + "\n" +
-		"barPair=" + mode + " remapAge=" + formatDuration(age) +
-		" recalInterval=" + formatDuration(BarPairRecalInterval) + "\n" +
+		"barPair=" + mode + " remapAge=" + formatDuration(age) + "\n" +
 		"hpRuns=" + itoa(len(scan.hpRuns)) + " spRuns=" + itoa(len(scan.spRuns)) + "\n" +
 		"selectedHP x1=" + itoa(scan.hpRun.X1) + " x2=" + itoa(scan.hpRun.X2) +
 		" y=" + itoa(scan.hpRun.Y) + " w=" + itoa(scan.hpRun.Width) + "\n" +

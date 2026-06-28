@@ -9,4 +9,6 @@ const (
 	KeyBindTimeout     = 5 * time.Second
 	KeyReleaseSettle   = 500 * time.Millisecond
 	SessionCloseWait   = 10 * time.Second
+	PotConfirmReads    = 3
+	PotUnlatchReads    = 3
 )

@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"image"
 	"os"
 	"sync"
 )
@@ -36,13 +35,21 @@ type AutoPotRunner struct {
 	liveMu sync.RWMutex
 	live   AutoPotConfig
 
-	barsMu sync.RWMutex
-	bars   MappedBars
+	pair         *BarPairCache
+	hpStabilizer *BarStabilizer
+	spStabilizer *BarStabilizer
 }
 
 func NewAutoPot(cfg AutoPotConfig) *AutoPotRunner {
 	cfg.applyDefaults()
-	return &AutoPotRunner{cfg: cfg, live: cfg}
+	pair := &BarPairCache{}
+	return &AutoPotRunner{
+		cfg:          cfg,
+		live:         cfg,
+		pair:         pair,
+		hpStabilizer: NewBarStabilizer(pair, true, cfg.HPThreshold),
+		spStabilizer: NewBarStabilizer(pair, false, cfg.SPThreshold),
+	}
 }
 
 func (a *AutoPotRunner) Running() bool {
@@ -62,6 +69,8 @@ func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
 	}
 	a.live = cfg
 	a.liveMu.Unlock()
+	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
+	a.spStabilizer.SetThreshold(cfg.SPThreshold)
 }
 
 func (a *AutoPotRunner) settings() AutoPotConfig {
@@ -70,16 +79,10 @@ func (a *AutoPotRunner) settings() AutoPotConfig {
 	return a.live
 }
 
-func (a *AutoPotRunner) mappedBars() MappedBars {
-	a.barsMu.RLock()
-	defer a.barsMu.RUnlock()
-	return a.bars
-}
-
-func (a *AutoPotRunner) setMappedBars(bars MappedBars) {
-	a.barsMu.Lock()
-	a.bars = bars
-	a.barsMu.Unlock()
+func (a *AutoPotRunner) resetStabilizers() {
+	a.pair.Reset()
+	a.hpStabilizer.Reset()
+	a.spStabilizer.Reset()
 }
 
 func (a *AutoPotRunner) Start() error {
@@ -103,6 +106,8 @@ func (a *AutoPotRunner) Start() error {
 		return fmt.Errorf("input session is required")
 	}
 
+	a.resetStabilizers()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.running = true
@@ -116,6 +121,7 @@ func (a *AutoPotRunner) Start() error {
 			a.running = false
 			a.cancel = nil
 			a.mu.Unlock()
+			a.resetStabilizers()
 		}()
 		a.run(ctx)
 	}()
@@ -142,7 +148,7 @@ func (a *AutoPotRunner) Wait() {
 }
 
 func (a *AutoPotRunner) log(msg string) {
-	a.cfg.Log(msg)
+	a.settings().Log(msg)
 }
 
 func (a *AutoPotRunner) run(ctx context.Context) {
@@ -164,66 +170,39 @@ func (a *AutoPotRunner) run(ctx context.Context) {
 			continue
 		}
 
-		bars, hp, sp, refreshed := a.readBars(img)
 		if debugSave {
-			_ = SaveMappedBarsDebug(img, bars, "bar_search_debug.png")
-			a.log(FormatMappedBarsLog(img, bars, hp, sp, refreshed))
+			bars, err := RefreshBarPair(img)
+			if err == nil {
+				hp, sp := ReadMappedBars(img, bars)
+				_ = SaveMappedBarsDebug(img, bars, "bar_search_debug.png")
+				a.log(FormatMappedBarsLog(img, bars, hp, sp, true))
+			}
 		}
 
 		cfg := a.settings()
 
-		if cfg.HPEnabled && hp.Found && hp.Percent < float64(cfg.HPThreshold) {
-			_, hpPot := a.readBarForPot(img, true)
-			if hpPot.Found && hpPot.Percent < float64(cfg.HPThreshold) {
-				a.healUntil(ctx, session, true)
-				continue
-			}
+		hp := a.hpStabilizer.Update(img, true)
+		if cfg.HPEnabled && hp.Status == BarStatusLow {
+			a.healUntil(ctx, session, true)
+			continue
 		}
 
-		if cfg.SPEnabled && sp.Found && sp.Percent < float64(cfg.SPThreshold) {
-			_, spPot := a.readBarForPot(img, false)
-			if spPot.Found && spPot.Percent < float64(cfg.SPThreshold) {
-				a.healUntil(ctx, session, false)
-				continue
-			}
+		sp := a.spStabilizer.Update(img, false)
+		if cfg.SPEnabled && sp.Status == BarStatusLow {
+			a.healUntil(ctx, session, false)
+			continue
 		}
 
 		sleep(ctx, KeyTapHold)
 	}
 }
 
-func (a *AutoPotRunner) readBars(img image.Image) (bars MappedBars, hp, sp BarRead, refreshed bool) {
-	bars = a.mappedBars()
-	hp, sp = ReadMappedBars(img, bars)
-	if NeedsRemap(img, bars, hp, sp) {
-		mapped, err := RefreshBarPair(img)
-		if err == nil {
-			a.setMappedBars(mapped)
-			bars = mapped
-			hp, sp = ReadMappedBars(img, bars)
-			refreshed = true
-		} else {
-			a.setMappedBars(MappedBars{})
-			return MappedBars{}, BarRead{}, BarRead{}, false
-		}
-	}
-	return bars, hp, sp, refreshed
-}
-
-func (a *AutoPotRunner) readBarForPot(img image.Image, hpBar bool) (MappedBars, BarRead) {
-	mapped, err := RefreshBarPair(img)
-	if err != nil {
-		return MappedBars{}, BarRead{}
-	}
-	a.setMappedBars(mapped)
-	hp, sp := ReadMappedBars(img, mapped)
-	if hpBar {
-		return mapped, hp
-	}
-	return mapped, sp
-}
-
 func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, hpBar bool) {
+	stabilizer := a.spStabilizer
+	if hpBar {
+		stabilizer = a.hpStabilizer
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return
@@ -233,17 +212,18 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 			continue
 		}
 		cfg := a.settings()
-		vk, threshold, ok := healTarget(cfg, hpBar)
+		vk, ok := healTarget(cfg, hpBar)
 		if !ok {
 			return
 		}
+
 		img, _, err := CapturePlayerBarSearch()
 		if err != nil {
 			sleep(ctx, PollInterval)
 			continue
 		}
-		_, read := a.readBarForPot(img, hpBar)
-		if !read.Found || read.Percent >= float64(threshold) {
+		read := stabilizer.Update(img, hpBar)
+		if read.Status != BarStatusLow {
 			return
 		}
 		before := read.Percent
@@ -259,17 +239,15 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 				sleep(ctx, PollInterval)
 				continue
 			}
-			cfg := a.settings()
-			_, threshold, ok := healTarget(cfg, hpBar)
-			if !ok {
+			if _, ok := healTarget(a.settings(), hpBar); !ok {
 				return
 			}
 			img, _, err := CapturePlayerBarSearch()
 			if err != nil {
 				continue
 			}
-			_, read := a.readBarForPot(img, hpBar)
-			if !read.Found || read.Percent >= float64(threshold) {
+			read := stabilizer.Update(img, hpBar)
+			if read.Status != BarStatusLow {
 				return
 			}
 			if read.Percent > before {
@@ -279,15 +257,15 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 	}
 }
 
-func healTarget(cfg AutoPotConfig, hpBar bool) (vk int32, threshold int, ok bool) {
+func healTarget(cfg AutoPotConfig, hpBar bool) (vk int32, ok bool) {
 	if hpBar {
 		if !cfg.HPEnabled || cfg.HPKeyVK == 0 {
-			return 0, 0, false
+			return 0, false
 		}
-		return cfg.HPKeyVK, cfg.HPThreshold, true
+		return cfg.HPKeyVK, true
 	}
 	if !cfg.SPEnabled || cfg.SPKeyVK == 0 {
-		return 0, 0, false
+		return 0, false
 	}
-	return cfg.SPKeyVK, cfg.SPThreshold, true
+	return cfg.SPKeyVK, true
 }

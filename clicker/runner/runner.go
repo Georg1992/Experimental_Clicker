@@ -8,27 +8,55 @@ import (
 )
 
 const (
-	DefaultAPIAddr = "localhost:3242"
-	DefaultDelayMs = 50
-	StepHoldMs     = 20 // minimum gap so virtual HID events register
-	PauseVK        = 0x23 // End
+	DefaultAPIAddr   = "localhost:3242"
+	DefaultDelayMs   = 50
+	StepHoldMs       = 20   // minimum gap so virtual HID events register
+	PauseVK          = 0x23 // End
+	ClickerSlotCount = 2
 )
 
-type Config struct {
-	Session    *ViiperSession
+type ClickerSlot struct {
 	TriggerVKs []int32
 	DelayMs    int
 	MouseClick bool
-	Log        func(string)
+}
+
+type Config struct {
+	Session *ViiperSession
+	Slots   [ClickerSlotCount]ClickerSlot
+	Log     func(string)
 }
 
 func (c *Config) applyDefaults() {
-	if c.DelayMs <= 0 {
-		c.DelayMs = DefaultDelayMs
+	for i := range c.Slots {
+		if c.Slots[i].DelayMs <= 0 {
+			c.Slots[i].DelayMs = DefaultDelayMs
+		}
 	}
 	if c.Log == nil {
 		c.Log = func(string) {}
 	}
+}
+
+func copyClickerSlots(slots [ClickerSlotCount]ClickerSlot) [ClickerSlotCount]ClickerSlot {
+	var out [ClickerSlotCount]ClickerSlot
+	for i, slot := range slots {
+		out[i] = ClickerSlot{
+			TriggerVKs: append([]int32(nil), slot.TriggerVKs...),
+			DelayMs:    slot.DelayMs,
+			MouseClick: slot.MouseClick,
+		}
+	}
+	return out
+}
+
+func ActiveClickerSlotIndex(slots [ClickerSlotCount]ClickerSlot) (int, int32, bool) {
+	for i, slot := range slots {
+		if vk, ok := ActiveTrigger(slot.TriggerVKs); ok {
+			return i, vk, true
+		}
+	}
+	return -1, 0, false
 }
 
 type Runner struct {
@@ -38,10 +66,8 @@ type Runner struct {
 	cancel         context.CancelFunc
 	done           chan struct{}
 	running        bool
-	liveMu         sync.RWMutex
-	liveTriggerVKs []int32
-	liveDelayMs    int
-	liveMouseClick bool
+	liveMu    sync.RWMutex
+	liveSlots [ClickerSlotCount]ClickerSlot
 }
 
 func New(cfg Config) *Runner {
@@ -69,9 +95,7 @@ func (r *Runner) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.cancel = cancel
 	r.running = true
-	r.liveTriggerVKs = append([]int32(nil), r.cfg.TriggerVKs...)
-	r.liveDelayMs = r.cfg.DelayMs
-	r.liveMouseClick = r.cfg.MouseClick
+	r.liveSlots = copyClickerSlots(r.cfg.Slots)
 	r.done = make(chan struct{})
 	r.mu.Unlock()
 
@@ -107,23 +131,19 @@ func (r *Runner) Wait() {
 	}
 }
 
-func (r *Runner) UpdateSettings(triggerVKs []int32, delayMs int, mouseClick bool) {
+func (r *Runner) UpdateSettings(slots [ClickerSlotCount]ClickerSlot) {
+	cfg := Config{Slots: slots}
+	cfg.applyDefaults()
 	r.liveMu.Lock()
-	r.liveTriggerVKs = append([]int32(nil), triggerVKs...)
-	if delayMs > 0 {
-		r.liveDelayMs = delayMs
-	}
-	r.liveMouseClick = mouseClick
+	r.liveSlots = copyClickerSlots(cfg.Slots)
 	r.liveMu.Unlock()
 }
 
-func (r *Runner) settings() ([]int32, time.Duration, bool) {
+func (r *Runner) settings() [ClickerSlotCount]ClickerSlot {
 	r.liveMu.RLock()
-	delayMs := r.liveDelayMs
-	triggerVKs := append([]int32(nil), r.liveTriggerVKs...)
-	mouseClick := r.liveMouseClick
+	slots := copyClickerSlots(r.liveSlots)
 	r.liveMu.RUnlock()
-	return triggerVKs, time.Duration(delayMs) * time.Millisecond, mouseClick
+	return slots
 }
 
 func (r *Runner) log(msg string) {
@@ -143,21 +163,33 @@ func (r *Runner) run(ctx context.Context) {
 			continue
 		}
 
-		triggerVKs, delay, mouseClick := r.settings()
-		if !TriggerHeld(triggerVKs) {
+		slots := r.settings()
+		slotIdx, triggerVK, active := ActiveClickerSlotIndex(slots)
+		if !active {
 			time.Sleep(PollInterval)
 			continue
 		}
 
-		triggerVK, _ := ActiveTrigger(triggerVKs)
+		slot := slots[slotIdx]
+		triggerVKs := append([]int32(nil), slot.TriggerVKs...)
+		delay := time.Duration(slot.DelayMs) * time.Millisecond
+		mouseClick := slot.MouseClick
 
 		for TriggerHeld(triggerVKs) && !session.Paused() {
 			if ctx.Err() != nil {
 				return
 			}
 
-			triggerVKs, delay, mouseClick = r.settings()
-			triggerVK, _ = ActiveTrigger(triggerVKs)
+			slots = r.settings()
+			newIdx, newVK, active := ActiveClickerSlotIndex(slots)
+			if !active || newIdx != slotIdx {
+				break
+			}
+			triggerVK = newVK
+			slot = slots[slotIdx]
+			triggerVKs = append([]int32(nil), slot.TriggerVKs...)
+			delay = time.Duration(slot.DelayMs) * time.Millisecond
+			mouseClick = slot.MouseClick
 			if err := runCycle(ctx, session, triggerVK, triggerVKs, delay, mouseClick); err != nil {
 				if ctx.Err() != nil {
 					return

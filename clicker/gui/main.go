@@ -7,8 +7,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strconv"
 	"sync"
 	"time"
 
@@ -22,14 +20,13 @@ type guiApp struct {
 	logItems   []string
 
 	// Clicker tab
-	keyLabel      *walk.Label
-	delayEdit     *walk.LineEdit
-	mouseClickCB  *walk.CheckBox
-	startBtn      *walk.PushButton
-	stopBtn       *walk.PushButton
-	statusBadge   *statusBadge
-	bindBtn       *walk.PushButton
-	clearBtn      *walk.PushButton
+	clickerSlots           [runner.ClickerSlotCount]clickerSlotWidgets
+	clickerTriggerVKs      [runner.ClickerSlotCount][]int32
+	clickerBindingSlot     int
+	clickerLastLoggedDelay [runner.ClickerSlotCount]int
+	startBtn                *walk.PushButton
+	stopBtn                 *walk.PushButton
+	statusBadge             *statusBadge
 
 	// Timer keys (clicker tab)
 	timerSlots         [runner.TimerKeySlotCount]timerSlotWidgets
@@ -63,18 +60,15 @@ type guiApp struct {
 	timerKeyRunner  *runner.TimerKeyRunner
 	keyChainRunner  *runner.KeyChainRunner
 	inputSession    *runner.ViiperSession
-	triggerVKs      []int32
 	hpKeyVK         int32
 	spKeyVK         int32
-	binding         bool
 	autopotBinding  bool
-	lastLoggedDelay         int
 	lastAppliedHPThreshold  int
 	lastAppliedSPThreshold  int
 }
 
 func main() {
-	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1}
+	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1}
 	defer app.shutdown()
 
 	if err := app.createWindow(); err != nil {
@@ -131,10 +125,10 @@ func (a *guiApp) createWindow() error {
 	if err := mw.SetTitle("BELARUS CHAMP CLICKER"); err != nil {
 		return err
 	}
-	if err := mw.SetMinMaxSize(walk.Size{Width: 780, Height: 520}, walk.Size{}); err != nil {
+	if err := mw.SetMinMaxSize(walk.Size{Width: 780, Height: 600}, walk.Size{}); err != nil {
 		return err
 	}
-	if err := mw.SetSize(walk.Size{Width: 780, Height: 520}); err != nil {
+	if err := mw.SetSize(walk.Size{Width: 780, Height: 600}); err != nil {
 		return err
 	}
 
@@ -313,7 +307,7 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
 func (a *guiApp) setStarted(started bool) {
 	a.startBtn.SetEnabled(!started)
 	a.stopBtn.SetEnabled(started)
-	a.setConfigEnabled(started)
+	a.setClickerConfigEnabled(started)
 	a.setAutoPotConfigEnabled(started)
 	a.setTimerKeyConfigEnabled(started)
 	a.setKeyChainConfigEnabled(started)
@@ -338,92 +332,15 @@ func (a *guiApp) setClickerStatus(status clickerStatus) {
 	}
 }
 
-func (a *guiApp) setConfigEnabled(enabled bool) {
-	a.bindBtn.SetEnabled(true)
-	a.clearBtn.SetEnabled(true)
-	a.delayEdit.SetEnabled(enabled)
-	a.mouseClickCB.SetEnabled(enabled)
-}
-
 func (a *guiApp) syncRunnerSettings() {
+	cfg := a.clickerConfig()
 	a.mu.Lock()
 	r := a.runner
-	vks := append([]int32(nil), a.triggerVKs...)
-	delay := a.delayMs()
 	a.mu.Unlock()
 
 	if r != nil && r.Running() {
-		r.UpdateSettings(vks, delay, a.mouseClickCB.Checked())
+		r.UpdateSettings(cfg.Slots)
 	}
-}
-
-func (a *guiApp) updateKeyLabel() {
-	a.keyLabel.SetText(runner.KeysText(a.triggerVKs))
-}
-
-func (a *guiApp) delayMs() int {
-	text := a.delayEdit.Text()
-	delay, err := strconv.Atoi(text)
-	if err != nil || delay <= 0 {
-		return runner.DefaultDelayMs
-	}
-	return delay
-}
-
-func (a *guiApp) logDelayIfChanged() {
-	delay := a.delayMs()
-	if delay == a.lastLoggedDelay {
-		return
-	}
-	a.lastLoggedDelay = delay
-	a.appendLog(fmt.Sprintf("Delay: %d ms", delay))
-}
-
-func (a *guiApp) onClearKeys() {
-	if !a.isStarted() {
-		return
-	}
-	a.triggerVKs = nil
-	a.updateKeyLabel()
-	a.syncRunnerSettings()
-	a.appendLog("Trigger keys cleared")
-}
-
-func (a *guiApp) onBindKey() {
-	if !a.isStarted() || a.binding {
-		return
-	}
-	a.binding = true
-	a.appendLog("Press a key to add (5s timeout)...")
-
-	go func() {
-		defer func() {
-			a.binding = false
-			a.mainWindow.Synchronize(func() {
-				a.setConfigEnabled(a.isStarted())
-			})
-		}()
-
-		vk, ok := runner.WaitForKeyPress(runner.KeyBindTimeout)
-		a.mainWindow.Synchronize(func() {
-			if !ok {
-				a.appendLog("Key bind timed out")
-				return
-			}
-			if _, hidOK := runner.VKToHID(vk); !hidOK {
-				a.appendLog(fmt.Sprintf("Key %s is not supported", runner.KeyName(vk)))
-				return
-			}
-			if slices.Contains(a.triggerVKs, vk) {
-				a.appendLog(fmt.Sprintf("Key %s is already bound", runner.KeyName(vk)))
-				return
-			}
-			a.triggerVKs = append(a.triggerVKs, vk)
-			a.updateKeyLabel()
-			a.syncRunnerSettings()
-			a.appendLog(fmt.Sprintf("Added trigger key %s", runner.KeyName(vk)))
-		})
-	}()
 }
 
 func (a *guiApp) onStart() {
@@ -470,13 +387,9 @@ func (a *guiApp) onStart() {
 	})
 	session.StartPauseWatcher(context.Background(), a.appendLog)
 
-	cfg := runner.Config{
-		Session:    session,
-		TriggerVKs: append([]int32(nil), a.triggerVKs...),
-		DelayMs:    a.delayMs(),
-		MouseClick: a.mouseClickCB.Checked(),
-		Log:        a.appendLog,
-	}
+	cfg := a.clickerConfig()
+	cfg.Session = session
+	cfg.Log = a.appendLog
 	a.runner = runner.New(cfg)
 	if err := a.runner.Start(); err != nil {
 		a.appendLog(fmt.Sprintf("Start failed: %v", err))
