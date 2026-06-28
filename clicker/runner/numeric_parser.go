@@ -186,8 +186,8 @@ func ExtractROI(img image.Image, roi image.Rectangle) image.Image {
 // PreprocessImage converts the image to binary (black/white) for glyph recognition.
 // Steps:
 //  1. Convert to grayscale
-//  2. Apply threshold
-//  3. Invert if needed (text is light on dark background)
+//  2. Apply threshold (text is BLACK digits on WHITE background)
+//  3. Black pixels become TRUE (foreground), white pixels become FALSE
 func PreprocessImage(img image.Image) [][]bool {
 	bounds := img.Bounds()
 	width := bounds.Dx()
@@ -203,9 +203,10 @@ func PreprocessImage(img image.Image) [][]bool {
 			// Convert to 8-bit grayscale
 			gray := uint8((299*r + 587*g + 114*b) / 1000 >> 8)
 
-			// Apply threshold (text is typically light)
-			// Adjust threshold based on actual game rendering
-			binary[y][x] = gray > 200 // text pixels are white/light
+			// Apply threshold: Black/dark pixels are foreground (text)
+			// Threshold at 150 - pixels darker than this are text
+			// Game font is typically pure black (0) on white (255)
+			binary[y][x] = gray < 150
 		}
 	}
 
