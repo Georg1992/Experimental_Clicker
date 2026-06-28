@@ -81,7 +81,7 @@ func (lib *GameFontTemplateLibrary) register(char rune, pattern string) {
 
 	// Determine source dimensions from pattern length
 	totalBits := len(cleanPattern)
-	
+
 	// If pattern is already 16x24 (384), use it directly
 	if totalBits == 384 {
 		lib.templates[char] = &GameFontTemplate{
@@ -97,7 +97,7 @@ func (lib *GameFontTemplateLibrary) register(char rune, pattern string) {
 	// Common case: patterns extracted from upscaled glyphs might be 50x56, 60x68, etc.
 	// For glyph templates: try widths from 20 to 80
 	sourceWidth, sourceHeight := 16, 24
-	
+
 	for w := 20; w <= 80; w++ {
 		h := totalBits / w
 		if w*h == totalBits {
@@ -157,26 +157,6 @@ func (lib *GameFontTemplateLibrary) MatchGlyphV2(binary [][]bool, glyphROI image
 	}
 
 	return bestChar, bestScore
-}
-
-// buildGlyphPattern creates a binary pattern from a glyph ROI.
-func buildGlyphPattern(binary [][]bool, glyphROI image.Rectangle) string {
-	pattern := ""
-	for y := glyphROI.Min.Y; y < glyphROI.Max.Y; y++ {
-		for x := glyphROI.Min.X; x < glyphROI.Max.X; x++ {
-			if y < len(binary) && x < len(binary[y]) {
-				if binary[y][x] {
-					pattern += "1"
-				} else {
-					pattern += "0"
-				}
-			} else {
-				pattern += "0"
-			}
-		}
-	}
-
-	return pattern
 }
 
 // normalizePattern resizes a pattern to match template dimensions using nearest-neighbor.

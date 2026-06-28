@@ -243,7 +243,7 @@ func SegmentGlyphs(binary [][]bool) []GlyphBitmap {
 		for x := 0; x < width; x++ {
 			if binary[y][x] && !visited[y][x] {
 				// Found a new glyph, flood-fill to find its bounds
-				glyph := floodFill(binary, visited, x, y)
+				glyph := oldFloodFill(binary, visited, x, y)
 				if glyph != nil && isValidGlyph(glyph) {
 					glyphs = append(glyphs, *glyph)
 				}
@@ -257,8 +257,9 @@ func SegmentGlyphs(binary [][]bool) []GlyphBitmap {
 	return glyphs
 }
 
-// floodFill finds a connected component starting from (x, y).
-func floodFill(binary [][]bool, visited [][]bool, startX, startY int) *GlyphBitmap {
+// oldFloodFill finds a connected component starting from (x, y).
+// Deprecated: Use connected_components.go instead.
+func oldFloodFill(binary [][]bool, visited [][]bool, startX, startY int) *GlyphBitmap {
 	height := len(binary)
 	width := len(binary[0])
 

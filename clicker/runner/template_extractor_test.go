@@ -20,17 +20,17 @@ func TestExtractRealGameFontTemplates(t *testing.T) {
 	groundTruth := map[string]struct {
 		hpCur, hpMax, spCur, spMax int
 	}{
-		"drift1.png":               {1290, 1290, 201, 201},
-		"aa.png":                   {751, 1290, 102, 201},
-		"drift5.png":               {639, 1290, 33, 201},
-		"drift6.png":               {651, 1290, 57, 201},
-		"Drift7.png":               {663, 1290, 93, 201},
-		"gg.png":                   {411, 1254, 117, 195},
-		"ii.png":                   {1254, 1254, 195, 195},
-		"jj.png":                   {120, 1280, 6, 201},
-		"pp.png":                   {1045, 1230, 66, 201},
-		"tt.png":                   {674, 1290, 18, 201},
-		"zoomed1.png":              {675, 1290, 117, 201},
+		"drift1.png":  {1290, 1290, 201, 201},
+		"aa.png":      {751, 1290, 102, 201},
+		"drift5.png":  {639, 1290, 33, 201},
+		"drift6.png":  {651, 1290, 57, 201},
+		"Drift7.png":  {663, 1290, 93, 201},
+		"gg.png":      {411, 1254, 117, 195},
+		"ii.png":      {1254, 1254, 195, 195},
+		"jj.png":      {120, 1280, 6, 201},
+		"pp.png":      {1045, 1230, 66, 201},
+		"tt.png":      {674, 1290, 18, 201},
+		"zoomed1.png": {675, 1290, 117, 201},
 	}
 
 	// Map: digit -> list of extracted glyph patterns

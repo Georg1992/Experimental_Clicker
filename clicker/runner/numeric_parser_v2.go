@@ -8,7 +8,7 @@ import (
 )
 
 // ParseNumericResourcesV2 is the new reliable numeric parser.
-// Uses fixed line ROIs and column-based glyph segmentation.
+// Uses fixed line ROIs, column-based glyph segmentation, and exemplar-based matching.
 func ParseNumericResourcesV2(img image.Image) (NumericRead, error) {
 	if img == nil {
 		return NumericRead{}, errors.New("image is nil")
@@ -51,8 +51,8 @@ func ParseNumericResourcesV2(img image.Image) (NumericRead, error) {
 	hpText := parseLineV2(binary, hpLineROI)
 	spText := parseLineV2(binary, spLineROI)
 
-	// Step 6: Extract values from parsed text
-	hp, spParsed, ok := ParseHPSPFromText(hpText, spText)
+	// Step 6: Validate and extract values from parsed text
+	hp, sp, ok := ParseHPSPFromText(hpText, spText)
 	if !ok {
 		return NumericRead{}, errors.New("failed to parse HP/SP values")
 	}
@@ -72,10 +72,10 @@ func ParseNumericResourcesV2(img image.Image) (NumericRead, error) {
 			Confidence: confidence,
 		},
 		SP: NumericResourceRead{
-			Found:      spParsed.Found,
-			Current:    spParsed.Current,
-			Max:        spParsed.Max,
-			Percent:    spParsed.Percent,
+			Found:      sp.Found,
+			Current:    sp.Current,
+			Max:        sp.Max,
+			Percent:    sp.Percent,
 			Confidence: confidence,
 		},
 	}
@@ -90,54 +90,19 @@ func parseLineV2(binary [][]bool, lineROI image.Rectangle) string {
 		return ""
 	}
 
-	height := lineROI.Dy()
-	width := lineROI.Dx()
-	y0 := lineROI.Min.Y
-	x0 := lineROI.Min.X
+	// Step 1: Find connected components of foreground pixels
+	components := FindConnectedComponents(binary, lineROI)
 
-	// Step 1: Find columns with foreground pixels
-	columnHasPixel := make([]bool, width)
-	for x := 0; x < width; x++ {
-		for y := 0; y < height; y++ {
-			absY := y0 + y
-			absX := x0 + x
-			if absY < len(binary) && absX < len(binary[absY]) {
-				if binary[absY][absX] {
-					columnHasPixel[x] = true
-					break
-				}
-			}
-		}
-	}
+	// Step 2: Convert components to glyph bounding boxes
+	// Merge components that are within 10 pixels of each other
+	glyphs := BoundingBoxesToGlyphs(components, 10)
 
-	// Step 2: Group adjacent columns into glyphs
-	glyphs := []image.Rectangle{}
-	inGlyph := false
-	glyphStart := 0
-
-	for x := 0; x < width; x++ {
-		if columnHasPixel[x] {
-			if !inGlyph {
-				glyphStart = x
-				inGlyph = true
-			}
-		} else {
-			if inGlyph {
-				// End of glyph
-				glyphEnd := x
-				glyphs = append(glyphs, image.Rect(glyphStart, y0, glyphEnd, y0+height))
-				inGlyph = false
-			}
-		}
-	}
-	if inGlyph {
-		glyphs = append(glyphs, image.Rect(glyphStart, y0, width+x0, y0+height))
-	}
-
-	// Step 3: Recognize each glyph
+	// Step 3: Recognize each glyph using exemplar-based matching
 	recognized := ""
+	lib := NewGlyphExemplarLibrary()
+
 	for _, glyphROI := range glyphs {
-		char := recognizeGlyphV2(binary, glyphROI)
+		char := recognizeGlyphV2Exemplar(binary, glyphROI, lib)
 		if char != 0 {
 			recognized += string(char)
 		}
@@ -146,8 +111,8 @@ func parseLineV2(binary [][]bool, lineROI image.Rectangle) string {
 	return recognized
 }
 
-// recognizeGlyphV2 recognizes a single glyph using template matching.
-func recognizeGlyphV2(binary [][]bool, glyphROI image.Rectangle) rune {
+// recognizeGlyphV2Exemplar recognizes a single glyph using exemplar-based matching.
+func recognizeGlyphV2Exemplar(binary [][]bool, glyphROI image.Rectangle, lib *GlyphExemplarLibrary) rune {
 	height := glyphROI.Dy()
 	width := glyphROI.Dx()
 
@@ -155,12 +120,61 @@ func recognizeGlyphV2(binary [][]bool, glyphROI image.Rectangle) rune {
 		return 0 // Too small
 	}
 
-	// Use game font template library
-	lib := NewGameFontTemplateLibrary()
-	char, confidence := lib.MatchGlyphV2(binary, glyphROI)
+	// Extract glyph pattern
+	glyphPattern := buildGlyphPattern(binary, glyphROI)
+	if glyphPattern == "" {
+		return 0
+	}
 
-	// Accept if confidence is reasonable (lowered threshold to 0.3)
-	if confidence < 0.3 {
+	// Match against exemplars
+	char, bestScore, _, confidence := lib.MatchGlyph(glyphPattern, width, height)
+
+	// Confidence threshold
+	// We need good separation between best and second best
+	if confidence < 0.1 {
+		return 0 // Too uncertain
+	}
+
+	// Also check absolute score (should be reasonably high)
+	if bestScore < 0.6 {
+		return 0
+	}
+
+	return char
+}
+
+// buildGlyphPattern creates a binary pattern from a glyph ROI.
+func buildGlyphPattern(binary [][]bool, glyphROI image.Rectangle) string {
+	pattern := ""
+	for y := glyphROI.Min.Y; y < glyphROI.Max.Y; y++ {
+		for x := glyphROI.Min.X; x < glyphROI.Max.X; x++ {
+			if y < len(binary) && x < len(binary[y]) {
+				if binary[y][x] {
+					pattern += "1"
+				} else {
+					pattern += "0"
+				}
+			} else {
+				pattern += "0"
+			}
+		}
+	}
+
+	return pattern
+}
+
+// Note: buildGlyphPattern is also defined in glyph_exemplars.go
+// ParseHPSPFromText extracts HP and SP values from recognized text.
+// Expected format: hpText="751/1290" spText="102/201"
+func ParseHPSPFromText(hpText, spText string) (hp, sp NumericResourceRead, ok bool) {
+	// Parse HP
+	if hpText == "" {
+		return NumericResourceRead{}, NumericResourceRead{}, false
+	}
+
+	hpCur, hpMax, err1 := parseValuePair(hpText)
+	if err1 != nil {
+		return NumericResourceRead{}, NumericResourceRead{}, false
 	}
 
 	// Parse SP
@@ -169,7 +183,7 @@ func recognizeGlyphV2(binary [][]bool, glyphROI image.Rectangle) rune {
 		return NumericResourceRead{}, NumericResourceRead{}, false
 	}
 
-	// Validate
+	// Validate ranges
 	if hpMax <= 0 || hpCur < 0 || hpCur > hpMax {
 		return NumericResourceRead{}, NumericResourceRead{}, false
 	}
@@ -202,14 +216,14 @@ func parseValuePair(text string) (current, max int, err error) {
 	// Find slash
 	parts := regexp.MustCompile(`/`).Split(text, -1)
 	if len(parts) != 2 {
-		return 0, 0, errors.New("invalid format")
+		return 0, 0, errors.New("invalid format: missing slash")
 	}
 
 	current, err1 := strconv.Atoi(parts[0])
 	max, err2 := strconv.Atoi(parts[1])
 
 	if err1 != nil || err2 != nil {
-		return 0, 0, errors.New("parse error")
+		return 0, 0, errors.New("parse error: invalid numbers")
 	}
 
 	return current, max, nil

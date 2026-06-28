@@ -104,7 +104,7 @@ func TestTemplateScoring(t *testing.T) {
 
 	testPattern1 := ""
 	for i := 0; i < 16*24; i++ {
-		if (i % 16) >= 7 && (i % 16) <= 8 { // Narrow column in middle
+		if (i%16) >= 7 && (i%16) <= 8 { // Narrow column in middle
 			testPattern1 += "1"
 		} else {
 			testPattern1 += "0"
