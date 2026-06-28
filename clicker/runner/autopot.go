@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 )
 
 type AutoPotConfig struct {
@@ -52,6 +53,8 @@ func (a *AutoPotRunner) UpdateSettings(cfg AutoPotConfig) {
 	a.liveMu.Unlock()
 	a.hpStabilizer.SetThreshold(cfg.HPThreshold)
 	a.spStabilizer.SetThreshold(cfg.SPThreshold)
+	// Update validator thresholds for next publish cycle
+	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
 }
 
 func (a *AutoPotRunner) settings() AutoPotConfig {
@@ -97,8 +100,9 @@ func (a *AutoPotRunner) Start() error {
 	a.running = true
 	a.done = make(chan struct{})
 
-	// Initialize numeric validator
+	// Initialize numeric validator with thresholds
 	a.numericValidator.SetLogFunc(cfg.Log)
+	a.numericValidator.SetThresholds(cfg.HPThreshold, cfg.SPThreshold)
 	a.numericValidator.Start(ctx)
 
 	a.mu.Unlock()
@@ -208,27 +212,23 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 		}
 		before := read.Percent
 
-		// Check numeric validator gate before potting (negative-only gate)
-		// GetCachedVeto reads from atomic cache, non-blocking, O(1)
-		threshold := cfg.HPThreshold
-		potionKind := PotionHP
-		if !hpBar {
-			threshold = cfg.SPThreshold
-			potionKind = PotionSP
-		}
-
-		vetoDecision := a.numericValidator.GetCachedVeto(potionKind, threshold)
-		if vetoDecision.Block {
-			// Log the numeric veto with detailed information
-			var potionName string
-			if hpBar {
-				potionName = "hp"
-			} else {
-				potionName = "sp"
+		// Check numeric safety flags before potting (push-based safety monitor)
+		// GetCachedSafety reads from atomic cache, non-blocking, O(1)
+		safety := a.numericValidator.GetCachedSafety()
+		if safety.IsFresh(2 * time.Second) {
+			// Safety snapshot is fresh, check DoNotPot flags
+			if hpBar && safety.HPDoNotPot {
+				// HP is safe, skip HP potion
+				cfg.Log(fmt.Sprintf("numeric_push_block kind=hp percent=%.1f threshold=%d confidence=%.2f age_ms=%d",
+					safety.HPPercent, safety.HPThreshold, safety.HPConfidence, safety.Age()))
+				return
 			}
-			cfg.Log(fmt.Sprintf("numeric_block kind=%s percent=%.1f threshold=%d confidence=%.2f age_ms=%d reason=%s",
-				potionName, vetoDecision.Percent, threshold, vetoDecision.Confidence, vetoDecision.AgeMs, vetoDecision.Reason))
-			return
+			if !hpBar && safety.SPDoNotPot {
+				// SP is safe, skip SP potion
+				cfg.Log(fmt.Sprintf("numeric_push_block kind=sp percent=%.1f threshold=%d confidence=%.2f age_ms=%d",
+					safety.SPPercent, safety.SPThreshold, safety.SPConfidence, safety.Age()))
+				return
+			}
 		}
 
 		if err := session.TapKey(vk, KeyTapHold); err != nil {
