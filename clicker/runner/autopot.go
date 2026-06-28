@@ -26,8 +26,8 @@ type AutoPotRunner struct {
 	liveMu sync.RWMutex
 	live   AutoPotConfig
 
-	hpStabilizer   *BarStabilizer
-	spStabilizer   *BarStabilizer
+	hpStabilizer     *BarStabilizer
+	spStabilizer     *BarStabilizer
 	numericValidator *NumericSafetyValidator
 }
 

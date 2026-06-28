@@ -205,13 +205,13 @@ func TestNumericValidatorEdgeCases(t *testing.T) {
 	v.SetSafetyMargin(5)
 
 	tests := []struct {
-		name           string
-		current        int
-		max            int
-		confidence     float64
-		threshold      int
-		expectedBlock  bool
-		description    string
+		name          string
+		current       int
+		max           int
+		confidence    float64
+		threshold     int
+		expectedBlock bool
+		description   string
 	}{
 		{
 			name:          "exactly at threshold + margin",

@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"image"
 	"sync"
 	"time"
 )
@@ -36,9 +35,9 @@ type NumericSafetyValidator struct {
 	state NumericSafetyState
 
 	// Configuration
-	pollInterval time.Duration
-	maxStateAge  time.Duration
-	safetyMargin int // percentage points above threshold to block
+	pollInterval  time.Duration
+	maxStateAge   time.Duration
+	safetyMargin  int // percentage points above threshold to block
 	minConfidence float64
 
 	// Logging
@@ -48,11 +47,11 @@ type NumericSafetyValidator struct {
 // NewNumericSafetyValidator creates a new numeric validator.
 func NewNumericSafetyValidator() *NumericSafetyValidator {
 	return &NumericSafetyValidator{
-		pollInterval: 750 * time.Millisecond,
-		maxStateAge:  2 * time.Second,
-		safetyMargin: 4, // block if numeric is 4% above threshold
+		pollInterval:  750 * time.Millisecond,
+		maxStateAge:   2 * time.Second,
+		safetyMargin:  4, // block if numeric is 4% above threshold
 		minConfidence: 0.7,
-		log: func(string) {},
+		log:           func(string) {},
 	}
 }
 
@@ -143,62 +142,47 @@ func (v *NumericSafetyValidator) run(ctx context.Context) {
 	}
 }
 
-// captureAndParse captures the status window and parses numeric HP/SP.
+// captureAndParse captures the status window and parses numeric HP/SP using the deterministic parser.
 func (v *NumericSafetyValidator) captureAndParse() {
-	// Capture top-left status window ROI
+	// Capture screen for status window ROI
 	img, _, err := CapturePlayerBarSearch()
 	if err != nil {
 		return
 	}
 
-	hp := v.parseNumericResource(img, true)
-	sp := v.parseNumericResource(img, false)
+	// Parse numeric HP/SP from the status window using deterministic bitmap matching
+	numRead, err := ParseNumericResources(img)
+	if err != nil {
+		// Parsing failed - update state with empty reads
+		v.mu.Lock()
+		v.state = NumericSafetyState{}
+		v.mu.Unlock()
+		return
+	}
+
+	// Update HP with timestamp and validator settings
+	if numRead.HP.Found {
+		numRead.HP.UpdatedAt = time.Now()
+		// Confidence is already set by parser, but ensure it meets validator's threshold
+		if numRead.HP.Confidence < v.minConfidence {
+			numRead.HP.Found = false
+		}
+	} else {
+		numRead.HP.UpdatedAt = time.Now()
+	}
+
+	// Update SP with timestamp and validator settings
+	if numRead.SP.Found {
+		numRead.SP.UpdatedAt = time.Now()
+		// Confidence is already set by parser
+		if numRead.SP.Confidence < v.minConfidence {
+			numRead.SP.Found = false
+		}
+	} else {
+		numRead.SP.UpdatedAt = time.Now()
+	}
 
 	v.mu.Lock()
-	v.state = NumericSafetyState{HP: hp, SP: sp}
+	v.state = NumericSafetyState{HP: numRead.HP, SP: numRead.SP}
 	v.mu.Unlock()
-}
-
-// parseNumericResource attempts to parse numeric current/max from the status window.
-// Returns NumericResourceRead with Found=false if parsing fails.
-func (v *NumericSafetyValidator) parseNumericResource(img image.Image, isHP bool) NumericResourceRead {
-	result := NumericResourceRead{
-		Found:     false,
-		UpdatedAt: time.Now(),
-		Confidence: 0.0,
-	}
-
-	// Try to extract numeric values from image
-	// This is a placeholder; actual OCR/text extraction would go here
-	current, max, confidence, ok := extractNumericHPSP(img, isHP)
-	if !ok || confidence < 0.5 {
-		return result
-	}
-
-	// Validate parsed values
-	if current < 0 || max <= 0 || current > max {
-		return result
-	}
-
-	percent := float64(current) / float64(max) * 100.0
-	if percent < 0 || percent > 100 {
-		return result
-	}
-
-	result.Found = true
-	result.Current = current
-	result.Max = max
-	result.Percent = percent
-	result.Confidence = confidence
-
-	return result
-}
-
-// extractNumericHPSP extracts numeric current/max values from the status window.
-// This is a placeholder implementation that would be replaced with actual OCR.
-// Returns (current, max, confidence, ok).
-func extractNumericHPSP(img image.Image, isHP bool) (current, max int, confidence float64, ok bool) {
-	// Placeholder: actual implementation would use tesseract or similar
-	// For now, return not found
-	return 0, 0, 0, false
 }
