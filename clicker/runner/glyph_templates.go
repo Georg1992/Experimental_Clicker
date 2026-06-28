@@ -2,9 +2,9 @@ package runner
 
 // GlyphTemplate represents a single digit or character template.
 type GlyphTemplate struct {
-	Char   rune    // '0'-'9' or '/'
-	Width  int     // Template width
-	Height int     // Template height
+	Char   rune     // '0'-'9' or '/'
+	Width  int      // Template width
+	Height int      // Template height
 	Pixels [][]bool // Binary pixel data
 }
 
@@ -18,13 +18,13 @@ func NewTemplateLibrary() *TemplateLibrary {
 	lib := &TemplateLibrary{
 		templates: make(map[rune]*GlyphTemplate),
 	}
-	
+
 	// Register all templates
 	for i := '0'; i <= '9'; i++ {
 		lib.templates[i] = getDigitTemplate(i)
 	}
 	lib.templates['/'] = getSeparatorTemplate()
-	
+
 	return lib
 }
 
@@ -44,7 +44,7 @@ func getDigitTemplate(digit rune) *GlyphTemplate {
 	// For Ragnarok's typical small fixed font, digits are approximately 8x14 pixels.
 	// These templates are simplified representations - in production they would be
 	// extracted from actual game screenshots and optimized for the exact font.
-	
+
 	switch digit {
 	case '0':
 		return &GlyphTemplate{
@@ -267,7 +267,7 @@ func getDigitTemplate(digit rune) *GlyphTemplate {
 			),
 		}
 	}
-	
+
 	return nil // Unknown digit
 }
 

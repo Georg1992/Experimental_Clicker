@@ -208,17 +208,25 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, session *ViiperSession, h
 		}
 		before := read.Percent
 
-		// Check numeric validator before potting
+		// Check numeric validator gate before potting (negative-only gate)
 		threshold := cfg.HPThreshold
+		potionKind := PotionHP
 		if !hpBar {
 			threshold = cfg.SPThreshold
+			potionKind = PotionSP
 		}
-		if hpBar && a.numericValidator.ShouldBlockHP(threshold) {
-			cfg.Log("HP pot blocked by numeric safety validator")
-			return
-		}
-		if !hpBar && a.numericValidator.ShouldBlockSP(threshold) {
-			cfg.Log("SP pot blocked by numeric safety validator")
+		
+		blockDecision := a.numericValidator.ShouldBlockPotion(potionKind, threshold)
+		if blockDecision.Block {
+			// Log the numeric block with detailed information
+			var potionName string
+			if hpBar {
+				potionName = "hp"
+			} else {
+				potionName = "sp"
+			}
+			cfg.Log(fmt.Sprintf("numeric_block kind=%s percent=%.1f threshold=%d confidence=%.2f age_ms=%d reason=%s",
+				potionName, blockDecision.Percent, threshold, blockDecision.Confidence, blockDecision.AgeMs, blockDecision.Reason))
 			return
 		}
 

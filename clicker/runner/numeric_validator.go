@@ -6,6 +6,23 @@ import (
 	"time"
 )
 
+// PotionKind represents the type of potion (HP or SP).
+type PotionKind int
+
+const (
+	PotionHP PotionKind = iota
+	PotionSP
+)
+
+// BlockDecision is returned by ShouldBlockPotion to indicate whether to block a potion press.
+type BlockDecision struct {
+	Block      bool    // true = skip potion press, false = allow potion press
+	Reason     string  // explanation of the decision
+	Percent    float64 // numeric resource percentage (0-100), or 0 if not available
+	Confidence float64 // parse confidence (0.0-1.0), or 0 if not available
+	AgeMs      int64   // age of the numeric read in milliseconds
+}
+
 // NumericResourceRead holds the result of parsing numeric HP/SP from the status window.
 type NumericResourceRead struct {
 	Found      bool
@@ -21,6 +38,11 @@ func (r *NumericResourceRead) IsStale(maxAge time.Duration) bool {
 	return time.Since(r.UpdatedAt) > maxAge
 }
 
+// Age returns the age of this read in milliseconds.
+func (r *NumericResourceRead) Age() int64 {
+	return int64(time.Since(r.UpdatedAt).Milliseconds())
+}
+
 // NumericSafetyState holds the latest validated numeric HP and SP reads.
 type NumericSafetyState struct {
 	HP NumericResourceRead
@@ -29,7 +51,8 @@ type NumericSafetyState struct {
 
 // NumericSafetyValidator runs in a background goroutine to validate HP/SP
 // by periodically parsing numeric text from the status window.
-// It only blocks potting when it confidently knows resources are safe.
+// It acts as a NEGATIVE-ONLY gate: only blocks potion presses when confident
+// that the resource is safe (above threshold), never triggers potting.
 type NumericSafetyValidator struct {
 	mu    sync.RWMutex
 	state NumericSafetyState
@@ -37,7 +60,6 @@ type NumericSafetyValidator struct {
 	// Configuration
 	pollInterval  time.Duration
 	maxStateAge   time.Duration
-	safetyMargin  int // percentage points above threshold to block
 	minConfidence float64
 
 	// Logging
@@ -49,7 +71,6 @@ func NewNumericSafetyValidator() *NumericSafetyValidator {
 	return &NumericSafetyValidator{
 		pollInterval:  750 * time.Millisecond,
 		maxStateAge:   2 * time.Second,
-		safetyMargin:  4, // block if numeric is 4% above threshold
 		minConfidence: 0.7,
 		log:           func(string) {},
 	}
@@ -69,11 +90,11 @@ func (v *NumericSafetyValidator) SetPollInterval(d time.Duration) {
 	v.pollInterval = d
 }
 
-// SetSafetyMargin sets the percentage above threshold to trigger blocking.
-func (v *NumericSafetyValidator) SetSafetyMargin(percent int) {
+// SetMinConfidence sets the minimum confidence required to block a potion.
+func (v *NumericSafetyValidator) SetMinConfidence(conf float64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.safetyMargin = percent
+	v.minConfidence = conf
 }
 
 // State returns a copy of the current numeric safety state.
@@ -83,43 +104,83 @@ func (v *NumericSafetyValidator) State() NumericSafetyState {
 	return v.state
 }
 
-// ShouldBlockHP returns true if numeric validator confidently knows HP is safe above threshold.
-// Returns false if parse failed, is stale, or confidence is too low (fail-safe).
-func (v *NumericSafetyValidator) ShouldBlockHP(threshold int) bool {
+// ShouldBlockPotion determines whether a potion press should be blocked.
+// This is the main entry point called by autopot before each potion keypress.
+// Returns a BlockDecision with Block=true ONLY if numeric validator is confident
+// that the resource is above the threshold. Otherwise returns Block=false (fail-safe).
+func (v *NumericSafetyValidator) ShouldBlockPotion(kind PotionKind, thresholdPercent int) BlockDecision {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
-	return v.shouldBlock(v.state.HP, threshold)
-}
 
-// ShouldBlockSP returns true if numeric validator confidently knows SP is safe above threshold.
-// Returns false if parse failed, is stale, or confidence is too low (fail-safe).
-func (v *NumericSafetyValidator) ShouldBlockSP(threshold int) bool {
-	v.mu.RLock()
-	defer v.mu.RUnlock()
-	return v.shouldBlock(v.state.SP, threshold)
-}
+	var read NumericResourceRead
+	if kind == PotionHP {
+		read = v.state.HP
+	} else {
+		read = v.state.SP
+	}
 
-// shouldBlock is the core blocking logic.
-// Returns true ONLY if all conditions are met for safe blocking.
-func (v *NumericSafetyValidator) shouldBlock(read NumericResourceRead, threshold int) bool {
-	// Fail-safe: no data means don't block
+	// Fail-safe: no parse data means allow potting
 	if !read.Found {
-		return false
+		return BlockDecision{
+			Block:  false,
+			Reason: "numeric_parse_not_found",
+			AgeMs:  read.Age(),
+		}
 	}
 
-	// Fail-safe: stale data means don't block
+	// Fail-safe: stale data means allow potting
 	if read.IsStale(v.maxStateAge) {
-		return false
+		return BlockDecision{
+			Block:  false,
+			Reason: "numeric_parse_stale",
+			Percent: read.Percent,
+			Confidence: read.Confidence,
+			AgeMs:  read.Age(),
+		}
 	}
 
-	// Fail-safe: low confidence means don't block
+	// Fail-safe: low confidence means allow potting
 	if read.Confidence < v.minConfidence {
-		return false
+		return BlockDecision{
+			Block:  false,
+			Reason: "numeric_confidence_low",
+			Percent: read.Percent,
+			Confidence: read.Confidence,
+			AgeMs:  read.Age(),
+		}
 	}
 
-	// Block if numeric is at or above threshold + safety margin
-	blockThreshold := threshold + v.safetyMargin
-	return int(read.Percent) >= blockThreshold
+	// Fail-safe: invalid max value means allow potting
+	if read.Max <= 0 {
+		return BlockDecision{
+			Block:  false,
+			Reason: "numeric_invalid_max",
+			Percent: read.Percent,
+			Confidence: read.Confidence,
+			AgeMs:  read.Age(),
+		}
+	}
+
+	// Core blocking decision:
+	// Block ONLY if numeric percent is ABOVE threshold (resource is safe, don't need potion)
+	if read.Percent > float64(thresholdPercent) {
+		return BlockDecision{
+			Block:      true,
+			Reason:     "numeric_above_threshold",
+			Percent:    read.Percent,
+			Confidence: read.Confidence,
+			AgeMs:      read.Age(),
+		}
+	}
+
+	// Resource is at or below threshold, allow autopot to pot normally
+	return BlockDecision{
+		Block:      false,
+		Reason:     "numeric_below_threshold",
+		Percent:    read.Percent,
+		Confidence: read.Confidence,
+		AgeMs:      read.Age(),
+	}
 }
 
 // Start launches the background numeric parsing goroutine.
@@ -186,3 +247,4 @@ func (v *NumericSafetyValidator) captureAndParse() {
 	v.state = NumericSafetyState{HP: numRead.HP, SP: numRead.SP}
 	v.mu.Unlock()
 }
+

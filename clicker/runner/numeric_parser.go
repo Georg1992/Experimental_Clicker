@@ -13,8 +13,9 @@ type NumericRead struct {
 
 // ParseNumericResources parses numeric HP/SP values from a game screenshot.
 // The status window is expected to be in the top-left corner with fixed layout:
-//   HP. 751 / 1290
-//   SP. 102 / 201
+//
+//	HP. 751 / 1290
+//	SP. 102 / 201
 //
 // Returns NumericRead with Found=false if parsing fails or confidence is too low.
 func ParseNumericResources(img image.Image) (NumericRead, error) {
@@ -78,19 +79,20 @@ func ParseNumericResources(img image.Image) (NumericRead, error) {
 // CaptureStatusWindowROI returns the fixed ROI for the status window.
 // Ragnarok status window is in top-left corner, typically 200x60 pixels.
 // This includes both HP and SP lines:
-//   HP. 751 / 1290
-//   SP. 102 / 201
+//
+//	HP. 751 / 1290
+//	SP. 102 / 201
 func CaptureStatusWindowROI(img image.Image) image.Rectangle {
 	bounds := img.Bounds()
-	
+
 	// Typical Ragnarok status window location and size
 	// Adjust these values based on actual game rendering
-	x0, y0 := 15, 15     // top-left offset from screen corner
-	width, height := 250, 70  // width and height of status window
-	
+	x0, y0 := 15, 15         // top-left offset from screen corner
+	width, height := 250, 70 // width and height of status window
+
 	x1 := x0 + width
 	y1 := y0 + height
-	
+
 	// Clamp to image bounds
 	if x1 > bounds.Max.X {
 		x1 = bounds.Max.X
@@ -98,20 +100,20 @@ func CaptureStatusWindowROI(img image.Image) image.Rectangle {
 	if y1 > bounds.Max.Y {
 		y1 = bounds.Max.Y
 	}
-	
+
 	return image.Rect(x0, y0, x1, y1)
 }
 
 // ExtractROI extracts a rectangular region from the image.
 func ExtractROI(img image.Image, roi image.Rectangle) image.Image {
 	bounds := img.Bounds()
-	
+
 	// Clamp ROI to bounds
 	roi = roi.Intersect(bounds)
 	if roi.Empty() {
 		return nil
 	}
-	
+
 	// Create a new image for this ROI
 	roiImg := image.NewRGBA(image.Rect(0, 0, roi.Dx(), roi.Dy()))
 	for y := 0; y < roi.Dy(); y++ {
@@ -119,36 +121,36 @@ func ExtractROI(img image.Image, roi image.Rectangle) image.Image {
 			roiImg.Set(x, y, img.At(roi.Min.X+x, roi.Min.Y+y))
 		}
 	}
-	
+
 	return roiImg
 }
 
 // PreprocessImage converts the image to binary (black/white) for glyph recognition.
 // Steps:
-//   1. Convert to grayscale
-//   2. Apply threshold
-//   3. Invert if needed (text is light on dark background)
+//  1. Convert to grayscale
+//  2. Apply threshold
+//  3. Invert if needed (text is light on dark background)
 func PreprocessImage(img image.Image) [][]bool {
 	bounds := img.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
-	
+
 	// Convert to grayscale and threshold
 	binary := make([][]bool, height)
 	for y := 0; y < height; y++ {
 		binary[y] = make([]bool, width)
 		for x := 0; x < width; x++ {
 			r, g, b, _ := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
-			
+
 			// Convert to 8-bit grayscale
 			gray := uint8((299*r + 587*g + 114*b) / 1000 >> 8)
-			
+
 			// Apply threshold (text is typically light)
 			// Adjust threshold based on actual game rendering
 			binary[y][x] = gray > 200 // text pixels are white/light
 		}
 	}
-	
+
 	return binary
 }
 
@@ -166,17 +168,17 @@ func SegmentGlyphs(binary [][]bool) []GlyphBitmap {
 	if len(binary) == 0 {
 		return nil
 	}
-	
+
 	height := len(binary)
 	width := len(binary[0])
-	
+
 	visited := make([][]bool, height)
 	for y := 0; y < height; y++ {
 		visited[y] = make([]bool, width)
 	}
-	
+
 	var glyphs []GlyphBitmap
-	
+
 	// Find connected components
 	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
@@ -189,10 +191,10 @@ func SegmentGlyphs(binary [][]bool) []GlyphBitmap {
 			}
 		}
 	}
-	
+
 	// Sort glyphs left-to-right by X coordinate
 	sortGlyphsByX(glyphs)
-	
+
 	return glyphs
 }
 
@@ -200,18 +202,18 @@ func SegmentGlyphs(binary [][]bool) []GlyphBitmap {
 func floodFill(binary [][]bool, visited [][]bool, startX, startY int) *GlyphBitmap {
 	height := len(binary)
 	width := len(binary[0])
-	
+
 	// Find bounds of connected component
 	minX, maxX := startX, startX
 	minY, maxY := startY, startY
-	
+
 	queue := [][2]int{{startX, startY}}
 	visited[startY][startX] = true
-	
+
 	for len(queue) > 0 {
 		x, y := queue[0][0], queue[0][1]
 		queue = queue[1:]
-		
+
 		if x < minX {
 			minX = x
 		}
@@ -224,7 +226,7 @@ func floodFill(binary [][]bool, visited [][]bool, startX, startY int) *GlyphBitm
 		if y > maxY {
 			maxY = y
 		}
-		
+
 		// Check 4-connected neighbors
 		for _, d := range [][2]int{{0, 1}, {0, -1}, {1, 0}, {-1, 0}} {
 			nx, ny := x+d[0], y+d[1]
@@ -235,19 +237,19 @@ func floodFill(binary [][]bool, visited [][]bool, startX, startY int) *GlyphBitm
 			}
 		}
 	}
-	
+
 	// Extract glyph bitmap
 	glyphWidth := maxX - minX + 1
 	glyphHeight := maxY - minY + 1
 	glyphPixels := make([][]bool, glyphHeight)
-	
+
 	for y := 0; y < glyphHeight; y++ {
 		glyphPixels[y] = make([]bool, glyphWidth)
 		for x := 0; x < glyphWidth; x++ {
 			glyphPixels[y][x] = binary[minY+y][minX+x]
 		}
 	}
-	
+
 	return &GlyphBitmap{
 		X:      minX,
 		Y:      minY,
@@ -285,42 +287,42 @@ func ParseHPSPLine(line string) (hp, sp NumericResourceRead, ok bool) {
 	if len(slashIndices) < 2 {
 		return NumericResourceRead{}, NumericResourceRead{}, false
 	}
-	
+
 	// Extract HP current/max
 	hpCurrentStr, hpMaxStr := extractNumberPair(line, slashIndices[0])
 	hpCurrent, hpErr1 := parseNumber(hpCurrentStr)
 	hpMax, hpErr2 := parseNumber(hpMaxStr)
-	
+
 	if hpErr1 != nil || hpErr2 != nil || hpMax <= 0 || hpCurrent > hpMax || hpCurrent < 0 {
 		return NumericResourceRead{}, NumericResourceRead{}, false
 	}
-	
+
 	// Extract SP current/max
 	spCurrentStr, spMaxStr := extractNumberPair(line, slashIndices[1])
 	spCurrent, spErr1 := parseNumber(spCurrentStr)
 	spMax, spErr2 := parseNumber(spMaxStr)
-	
+
 	if spErr1 != nil || spErr2 != nil || spMax <= 0 || spCurrent > spMax || spCurrent < 0 {
 		return NumericResourceRead{}, NumericResourceRead{}, false
 	}
-	
+
 	hpPercent := float64(hpCurrent) / float64(hpMax) * 100.0
 	spPercent := float64(spCurrent) / float64(spMax) * 100.0
-	
+
 	hp = NumericResourceRead{
 		Found:   true,
 		Current: hpCurrent,
 		Max:     hpMax,
 		Percent: hpPercent,
 	}
-	
+
 	sp = NumericResourceRead{
 		Found:   true,
 		Current: spCurrent,
 		Max:     spMax,
 		Percent: spPercent,
 	}
-	
+
 	return hp, sp, true
 }
 
@@ -344,14 +346,14 @@ func extractNumberPair(line string, separatorIdx int) (before, after string) {
 	}
 	beforeIdx++
 	before = line[beforeIdx:separatorIdx]
-	
+
 	// Extract number after separator
 	afterIdx := separatorIdx + 1
 	for afterIdx < len(line) && isDigit(rune(line[afterIdx])) {
 		afterIdx++
 	}
 	after = line[separatorIdx+1 : afterIdx]
-	
+
 	return before, after
 }
 

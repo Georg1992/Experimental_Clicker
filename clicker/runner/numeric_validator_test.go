@@ -6,326 +6,377 @@ import (
 	"time"
 )
 
-func TestNumericBlocksWhenAboveThreshold(t *testing.T) {
+// TestShouldBlockPotion_BlocksWhenAboveThreshold tests that block occurs when resource is above threshold.
+func TestShouldBlockPotion_BlocksWhenAboveThreshold(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
 
-	// Simulate numeric read: HP at 74%
+	// Simulate numeric read: HP at 97%
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    74,
+		Current:    97,
 		Max:        100,
-		Percent:    74.0,
+		Percent:    97.0,
 		UpdatedAt:  time.Now(),
 		Confidence: 0.9,
 	}
 	v.mu.Unlock()
 
-	// Threshold is 70, numeric is 74, margin is 4 -> block at 74 (70+4)
-	if !v.ShouldBlockHP(70) {
-		t.Errorf("Expected ShouldBlockHP(70) to return true when numeric is 74%%")
+	// Threshold is 30%, numeric is 97% -> BLOCK (resource is safe, don't need potion)
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+	if !decision.Block {
+		t.Errorf("Expected Block=true when HP=97%% and threshold=30%%, got Block=%v", decision.Block)
+	}
+	if decision.Reason != "numeric_above_threshold" {
+		t.Errorf("Expected Reason=numeric_above_threshold, got %q", decision.Reason)
 	}
 }
 
-func TestNumericDoesNotBlockWhenBelowThreshold(t *testing.T) {
+// TestShouldBlockPotion_AllowsWhenBelowThreshold tests that potion is allowed when resource is at/below threshold.
+func TestShouldBlockPotion_AllowsWhenBelowThreshold(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
 
-	// Simulate numeric read: HP at 69%
+	// Simulate numeric read: HP at 25%
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    69,
+		Current:    25,
 		Max:        100,
-		Percent:    69.0,
+		Percent:    25.0,
 		UpdatedAt:  time.Now(),
 		Confidence: 0.9,
 	}
 	v.mu.Unlock()
 
-	// Threshold is 70, numeric is 69, margin is 4 -> don't block
-	if v.ShouldBlockHP(70) {
-		t.Errorf("Expected ShouldBlockHP(70) to return false when numeric is 69%%")
+	// Threshold is 30%, numeric is 25% -> ALLOW (resource needs potion)
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+	if decision.Block {
+		t.Errorf("Expected Block=false when HP=25%% and threshold=30%%, got Block=%v", decision.Block)
+	}
+	if decision.Reason != "numeric_below_threshold" {
+		t.Errorf("Expected Reason=numeric_below_threshold, got %q", decision.Reason)
 	}
 }
 
-func TestNumericDoesNotBlockWhenNotFound(t *testing.T) {
+// TestShouldBlockPotion_AllowsWhenParserFailed tests fail-safe: allow when parse not found.
+func TestShouldBlockPotion_AllowsWhenParserFailed(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
+	// No numeric data set
 
-	// No numeric data
-	if v.ShouldBlockHP(70) {
-		t.Errorf("Expected ShouldBlockHP to return false when numeric data not found")
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+	if decision.Block {
+		t.Errorf("Expected Block=false when parser failed, got Block=%v", decision.Block)
+	}
+	if decision.Reason != "numeric_parse_not_found" {
+		t.Errorf("Expected Reason=numeric_parse_not_found, got %q", decision.Reason)
 	}
 }
 
-func TestNumericDoesNotBlockWhenStale(t *testing.T) {
+// TestShouldBlockPotion_AllowsWhenStale tests fail-safe: allow when numeric data is stale.
+func TestShouldBlockPotion_AllowsWhenStale(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
 
-	// Simulate old numeric read
+	// Simulate old numeric read (5 seconds old, max age is 2 seconds)
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    90,
+		Current:    95,
 		Max:        100,
-		Percent:    90.0,
-		UpdatedAt:  time.Now().Add(-5 * time.Second), // 5 seconds old
+		Percent:    95.0,
+		UpdatedAt:  time.Now().Add(-5 * time.Second),
 		Confidence: 0.9,
 	}
 	v.mu.Unlock()
 
-	// Even though numeric says 90%, it's stale -> don't block
-	if v.ShouldBlockHP(70) {
-		t.Errorf("Expected ShouldBlockHP to return false when data is stale")
+	// Even though numeric says 95%, it's stale -> ALLOW (don't rely on stale data)
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+	if decision.Block {
+		t.Errorf("Expected Block=false when data is stale, got Block=%v", decision.Block)
+	}
+	if decision.Reason != "numeric_parse_stale" {
+		t.Errorf("Expected Reason=numeric_parse_stale, got %q", decision.Reason)
 	}
 }
 
-func TestNumericDoesNotBlockWhenLowConfidence(t *testing.T) {
+// TestShouldBlockPotion_AllowsWhenLowConfidence tests fail-safe: allow when confidence is low.
+func TestShouldBlockPotion_AllowsWhenLowConfidence(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
 
 	// Simulate low-confidence numeric read
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    90,
+		Current:    95,
 		Max:        100,
-		Percent:    90.0,
+		Percent:    95.0,
 		UpdatedAt:  time.Now(),
-		Confidence: 0.3, // Low confidence
+		Confidence: 0.3, // Low confidence (min is 0.7)
 	}
 	v.mu.Unlock()
 
-	// Even though numeric says 90%, confidence is low -> don't block
-	if v.ShouldBlockHP(70) {
-		t.Errorf("Expected ShouldBlockHP to return false when confidence is low")
+	// Even though numeric says 95%, confidence is low -> ALLOW (don't trust unreliable parse)
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+	if decision.Block {
+		t.Errorf("Expected Block=false when confidence is low, got Block=%v", decision.Block)
+	}
+	if decision.Reason != "numeric_confidence_low" {
+		t.Errorf("Expected Reason=numeric_confidence_low, got %q", decision.Reason)
 	}
 }
 
-func TestNumericValidatorNeverTriggersPotion(t *testing.T) {
+// TestShouldBlockPotion_AllowsWhenInvalidMax tests fail-safe: allow when max is invalid.
+func TestShouldBlockPotion_AllowsWhenInvalidMax(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
 
-	// Simulate any numeric state
+	// Simulate invalid max (zero or negative)
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    50,
-		Max:        100,
-		Percent:    50.0,
+		Current:    95,
+		Max:        0, // Invalid: max should be > 0
+		Percent:    0,
 		UpdatedAt:  time.Now(),
 		Confidence: 0.9,
 	}
 	v.mu.Unlock()
 
-	// NumericSafetyValidator should NEVER say "use potion"
-	// It only says "don't use" (true) or "I can't decide" (false)
-	// It never returns true to trigger potting
-
-	// Test: When threshold is 80 and numeric is 50, should not block
-	// (can't decide because numeric is below threshold)
-	if v.ShouldBlockHP(80) {
-		t.Errorf("Expected ShouldBlockHP(80) false when numeric is 50%%")
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+	if decision.Block {
+		t.Errorf("Expected Block=false when max is invalid, got Block=%v", decision.Block)
 	}
-
-	// Test: When threshold is 30 and numeric is 50, should block
-	// (numeric is above threshold + margin)
-	if !v.ShouldBlockHP(30) {
-		t.Errorf("Expected ShouldBlockHP(30) true when numeric is 50%%")
+	if decision.Reason != "numeric_invalid_max" {
+		t.Errorf("Expected Reason=numeric_invalid_max, got %q", decision.Reason)
 	}
-
-	// But this is still not triggering, just blocking false triggers
 }
 
-func TestNumericBlocksSPIndependently(t *testing.T) {
+// TestShouldBlockPotion_SPIndependent tests that SP and HP use independent thresholds.
+func TestShouldBlockPotion_SPIndependent(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
 
+	// Set HP to high, SP to low
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    50,
+		Current:    95,
 		Max:        100,
-		Percent:    50.0,
+		Percent:    95.0,
 		UpdatedAt:  time.Now(),
 		Confidence: 0.9,
 	}
 	v.state.SP = NumericResourceRead{
 		Found:      true,
-		Current:    90,
+		Current:    25,
 		Max:        100,
-		Percent:    90.0,
+		Percent:    25.0,
 		UpdatedAt:  time.Now(),
 		Confidence: 0.9,
 	}
 	v.mu.Unlock()
 
-	// HP at 50%, SP at 90%
-	// With threshold 70:
-	// - HP should not block (50 < 70+4)
-	// - SP should block (90 >= 70+4)
-
-	if v.ShouldBlockHP(70) {
-		t.Errorf("Expected ShouldBlockHP(70) false when HP is 50%%")
+	// HP should block at 95% with 30% threshold
+	hpDecision := v.ShouldBlockPotion(PotionHP, 30)
+	if !hpDecision.Block {
+		t.Errorf("Expected Block=true for HP, got Block=%v", hpDecision.Block)
 	}
 
-	if !v.ShouldBlockSP(70) {
-		t.Errorf("Expected ShouldBlockSP(70) true when SP is 90%%")
+	// SP should allow at 25% with 30% threshold
+	spDecision := v.ShouldBlockPotion(PotionSP, 30)
+	if spDecision.Block {
+		t.Errorf("Expected Block=false for SP, got Block=%v", spDecision.Block)
 	}
 }
 
-func TestNumericValidatorCopiesStateThreadSafely(t *testing.T) {
+// TestShouldBlockPotion_NeverTriggersPotion tests that validator never returns a trigger signal.
+// The validator is NEGATIVE-ONLY: it can only block, never trigger potting.
+func TestShouldBlockPotion_NeverTriggersPotion(t *testing.T) {
 	v := NewNumericSafetyValidator()
 
+	testCases := []struct {
+		percent    float64
+		threshold  int
+		name       string
+	}{
+		{10.0, 30, "low_hp"},
+		{30.0, 30, "at_threshold"},
+		{50.0, 50, "at_threshold_mid"},
+		{0.0, 100, "critically_low"},
+	}
+
+	for _, tc := range testCases {
+		v.mu.Lock()
+		v.state.HP = NumericResourceRead{
+			Found:      true,
+			Current:    int(tc.percent),
+			Max:        100,
+			Percent:    tc.percent,
+			UpdatedAt:  time.Now(),
+			Confidence: 0.9,
+		}
+		v.mu.Unlock()
+
+		decision := v.ShouldBlockPotion(PotionHP, tc.threshold)
+
+		// When below or at threshold, block should be false (allow potion)
+		if tc.percent <= float64(tc.threshold) {
+			if decision.Block {
+				t.Errorf("Case %q: Expected Block=false when below/at threshold, got Block=%v with reason=%q",
+					tc.name, decision.Block, decision.Reason)
+			}
+		}
+	}
+}
+
+// TestShouldBlockPotion_EdgeCases tests boundary conditions.
+func TestShouldBlockPotion_EdgeCases(t *testing.T) {
+	v := NewNumericSafetyValidator()
+
+	testCases := []struct {
+		percent   float64
+		threshold int
+		wantBlock bool
+		name      string
+	}{
+		{30.1, 30, true, "slightly_above_threshold"},
+		{30.0, 30, false, "exactly_at_threshold"},
+		{29.9, 30, false, "slightly_below_threshold"},
+		{100.0, 0, true, "max_resource_min_threshold"},
+		{0.0, 0, false, "zero_resource_zero_threshold"},
+	}
+
+	for _, tc := range testCases {
+		v.mu.Lock()
+		v.state.HP = NumericResourceRead{
+			Found:      true,
+			Current:    int(tc.percent),
+			Max:        100,
+			Percent:    tc.percent,
+			UpdatedAt:  time.Now(),
+			Confidence: 0.9,
+		}
+		v.mu.Unlock()
+
+		decision := v.ShouldBlockPotion(PotionHP, tc.threshold)
+		if decision.Block != tc.wantBlock {
+			t.Errorf("Case %q: Expected Block=%v at percent=%.1f threshold=%d, got Block=%v",
+				tc.name, tc.wantBlock, tc.percent, tc.threshold, decision.Block)
+		}
+	}
+}
+
+// TestShouldBlockPotion_ReturnsMetadata tests that BlockDecision contains useful metadata.
+func TestShouldBlockPotion_ReturnsMetadata(t *testing.T) {
+	v := NewNumericSafetyValidator()
+
+	now := time.Now()
 	v.mu.Lock()
 	v.state.HP = NumericResourceRead{
 		Found:      true,
-		Current:    80,
+		Current:    95,
 		Max:        100,
-		Percent:    80.0,
-		UpdatedAt:  time.Now(),
-		Confidence: 0.9,
+		Percent:    95.0,
+		UpdatedAt:  now,
+		Confidence: 0.85,
 	}
 	v.mu.Unlock()
 
-	// State() should return a copy without holding the lock
-	state := v.State()
-	if !state.HP.Found {
-		t.Errorf("Expected State() to return HP data")
+	decision := v.ShouldBlockPotion(PotionHP, 30)
+
+	if decision.Percent != 95.0 {
+		t.Errorf("Expected Percent=95.0, got %.1f", decision.Percent)
 	}
-	if state.HP.Percent != 80.0 {
-		t.Errorf("Expected HP percent 80.0, got %v", state.HP.Percent)
+	if decision.Confidence != 0.85 {
+		t.Errorf("Expected Confidence=0.85, got %.2f", decision.Confidence)
+	}
+	if decision.AgeMs < 0 || decision.AgeMs > 100 {
+		t.Errorf("Expected AgeMs to be reasonable (0-100), got %d", decision.AgeMs)
 	}
 }
 
-func TestNumericValidatorEdgeCases(t *testing.T) {
+// TestNumericValidatorNeverBlocksOnError ensures fail-safe behavior for various error conditions.
+func TestNumericValidatorNeverBlocksOnError(t *testing.T) {
 	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(5)
 
-	tests := []struct {
-		name          string
-		current       int
-		max           int
-		confidence    float64
-		threshold     int
-		expectedBlock bool
-		description   string
+	errorCases := []struct {
+		setup func()
+		name  string
 	}{
 		{
-			name:          "exactly at threshold + margin",
-			current:       75,
-			max:           100,
-			confidence:    0.9,
-			threshold:     70,
-			expectedBlock: true,
-			description:   "75% == 70% + 5% margin",
+			setup: func() {
+				v.mu.Lock()
+				v.state = NumericSafetyState{} // Empty state
+				v.mu.Unlock()
+			},
+			name: "no_data",
 		},
 		{
-			name:          "just below threshold + margin",
-			current:       74,
-			max:           100,
-			confidence:    0.9,
-			threshold:     70,
-			expectedBlock: false,
-			description:   "74% < 70% + 5% margin",
+			setup: func() {
+				v.mu.Lock()
+				v.state.HP = NumericResourceRead{
+					Found: false,
+				}
+				v.mu.Unlock()
+			},
+			name: "found_false",
 		},
 		{
-			name:          "confidence at minimum threshold",
-			current:       100,
-			max:           100,
-			confidence:    0.7,
-			threshold:     50,
-			expectedBlock: true,
-			description:   "100% with confidence 0.7 should block",
+			setup: func() {
+				v.mu.Lock()
+				v.state.HP = NumericResourceRead{
+					Found:     true,
+					Max:       0,
+					Percent:   0,
+					UpdatedAt: time.Now(),
+					Confidence: 0.9,
+				}
+				v.mu.Unlock()
+			},
+			name: "invalid_max",
 		},
 		{
-			name:          "confidence just below minimum",
-			current:       100,
-			max:           100,
-			confidence:    0.69,
-			threshold:     50,
-			expectedBlock: false,
-			description:   "confidence 0.69 is below 0.7 minimum",
+			setup: func() {
+				v.mu.Lock()
+				v.state.HP = NumericResourceRead{
+					Found:      true,
+					Max:        100,
+					Percent:    50.0,
+					UpdatedAt:  time.Now().Add(-10 * time.Second), // Very stale
+					Confidence: 0.9,
+				}
+				v.mu.Unlock()
+			},
+			name: "stale_data",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			v.mu.Lock()
-			v.state.HP = NumericResourceRead{
-				Found:      true,
-				Current:    tt.current,
-				Max:        tt.max,
-				Percent:    float64(tt.current) / float64(tt.max) * 100.0,
-				UpdatedAt:  time.Now(),
-				Confidence: tt.confidence,
-			}
-			v.mu.Unlock()
-
-			result := v.ShouldBlockHP(tt.threshold)
-			if result != tt.expectedBlock {
-				t.Errorf("%s: expected %v, got %v (%s)", tt.name, tt.expectedBlock, result, tt.description)
-			}
-		})
+	for _, tc := range errorCases {
+		tc.setup()
+		decision := v.ShouldBlockPotion(PotionHP, 30)
+		if decision.Block {
+			t.Errorf("Case %q: Expected Block=false on error, got Block=%v with reason=%q",
+				tc.name, decision.Block, decision.Reason)
+		}
 	}
 }
 
-func TestNumericValidatorStalenessBoundary(t *testing.T) {
-	v := NewNumericSafetyValidator()
-	v.SetSafetyMargin(4)
-
-	// Test just before maxStateAge
-	v.mu.Lock()
-	v.state.HP = NumericResourceRead{
-		Found:      true,
-		Current:    90,
-		Max:        100,
-		Percent:    90.0,
-		UpdatedAt:  time.Now().Add(-1999 * time.Millisecond),
-		Confidence: 0.9,
-	}
-	v.mu.Unlock()
-
-	if !v.ShouldBlockHP(70) {
-		t.Errorf("Expected fresh data (1.999s old, maxAge 2s) to block")
-	}
-
-	// Test just after maxStateAge
-	v.mu.Lock()
-	v.state.HP = NumericResourceRead{
-		Found:      true,
-		Current:    90,
-		Max:        100,
-		Percent:    90.0,
-		UpdatedAt:  time.Now().Add(-2001 * time.Millisecond),
-		Confidence: 0.9,
-	}
-	v.mu.Unlock()
-
-	if v.ShouldBlockHP(70) {
-		t.Errorf("Expected stale data (2.001s old, maxAge 2s) to not block")
-	}
-}
-
-func TestNumericValidatorBackgroundStart(t *testing.T) {
+// TestNumericValidatorAsyncStart tests that validator starts and runs asynchronously.
+func TestNumericValidatorAsyncStart(t *testing.T) {
 	v := NewNumericSafetyValidator()
 
-	// Just verify that Start doesn't panic and the validator can be stopped
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	// Start the validator
-	v.Start(ctx)
+	// Start the validator in a goroutine
+	// In real use, it will capture and parse images
+	// In test, we just verify it doesn't panic during initialization
+	go v.Start(ctx)
 
-	// Small delay to ensure goroutine starts
-	time.Sleep(100 * time.Millisecond)
-
-	// Cancel context to stop validator
-	cancel()
-	time.Sleep(100 * time.Millisecond)
+	// Give goroutine minimal time to start
+	time.Sleep(50 * time.Millisecond)
 
 	// Should be able to call State without blocking
 	_ = v.State()
+
+	// Wait for context to expire
+	<-ctx.Done()
+	time.Sleep(100 * time.Millisecond) // Let goroutine exit
 }

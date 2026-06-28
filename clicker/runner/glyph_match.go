@@ -41,9 +41,9 @@ func (m *glyphMatcher) MatchGlyph(glyph *GlyphBitmap) (rune, float64) {
 
 // scoreMatch computes a similarity score between two binary bitmaps.
 // Uses normalized Hamming distance:
-//   1. Normalize both bitmaps to a common size
-//   2. Count matching pixels
-//   3. Return matching_pixels / total_pixels as confidence
+//  1. Normalize both bitmaps to a common size
+//  2. Count matching pixels
+//  3. Return matching_pixels / total_pixels as confidence
 func (m *glyphMatcher) scoreMatch(bitmap1, bitmap2 [][]bool) float64 {
 	if len(bitmap1) == 0 || len(bitmap2) == 0 {
 		return 0.0
