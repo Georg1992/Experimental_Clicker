@@ -112,13 +112,6 @@ func (v *NumericSafetyValidator) GetCachedSafety() *SafetySnapshot {
 	return snapshot
 }
 
-// State returns the raw numeric reads for diagnostics.
-// Note: This is for testing/debugging; AutoPot uses GetCachedSafety.
-func (v *NumericSafetyValidator) State() status.NumericRead {
-	// For backward compatibility with tests; returns empty
-	return status.NumericRead{}
-}
-
 // Start launches the background numeric parsing goroutine.
 // The goroutine runs independently, capturing and parsing as fast as possible.
 func (v *NumericSafetyValidator) Start(ctx context.Context) {
