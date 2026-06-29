@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	windows "experimental-clicker/runner/platform/windows"
+
 	"github.com/Alia5/VIIPER/device/keyboard"
 	"github.com/Alia5/VIIPER/device/mouse"
 	"github.com/Alia5/VIIPER/viiperclient"
@@ -97,7 +99,7 @@ func (s *ViiperSession) StartPauseWatcher(ctx context.Context, log func(string))
 		defer close(s.pauseDone)
 		pauseKeyDown := false
 		for watchCtx.Err() == nil {
-			if PollKeyToggle(&pauseKeyDown, PauseVK) {
+			if windows.PollKeyToggle(&pauseKeyDown, PauseVK) {
 				s.togglePaused(log)
 			}
 			time.Sleep(PollInterval)

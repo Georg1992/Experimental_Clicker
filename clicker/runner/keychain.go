@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	windows "experimental-clicker/runner/platform/windows"
 )
 
 const KeyChainSlotCount = 7
@@ -139,12 +141,12 @@ func (k *KeyChainRunner) run(ctx context.Context) {
 		}
 
 		trigger := cfg.Keys[0]
-		if !PhysicalKeyDown(trigger) {
+		if !windows.PhysicalKeyDown(trigger) {
 			sleep(ctx, PollInterval)
 			continue
 		}
 
-		for PhysicalKeyDown(trigger) && ctx.Err() == nil {
+		for windows.PhysicalKeyDown(trigger) && ctx.Err() == nil {
 			if session.Paused() {
 				break
 			}
