@@ -1,13 +1,20 @@
 package glyph
 
 import (
+	"bytes"
+	"embed"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+//go:embed exemplars/*.png
+var exemplarsFS embed.FS
 
 // GlyphExemplarLibrary stores normalized exemplars for matching.
 type GlyphExemplarLibrary struct {
@@ -17,14 +24,21 @@ type GlyphExemplarLibrary struct {
 	debugDir string
 }
 
-// NewGlyphExemplarLibrary creates a library by loading templates from disk.
+// NewGlyphExemplarLibrary creates a library by loading exemplar templates
+// compiled into the binary via //go:embed. The exemplars live in the
+// "exemplars/" subdirectory of this package and are discovered at compile
+// time, so adding a new exemplar PNG to that directory makes it available
+// automatically — no separate list to maintain.
+//
+// Because the templates are embedded, the library works regardless of the
+// process working directory and cannot silently fail at runtime due to
+// missing template files.
 func NewGlyphExemplarLibrary() *GlyphExemplarLibrary {
 	lib := &GlyphExemplarLibrary{
 		exemplars: make(map[rune]NormalizedGlyph),
 	}
 
-	// Load from testdata/Digits folder
-	lib.loadFromDisk()
+	lib.loadFromEmbed()
 
 	return lib
 }
@@ -37,36 +51,36 @@ func (lib *GlyphExemplarLibrary) SetDebugDir(debugDir string) {
 	}
 }
 
-// loadFromDisk loads templates from testdata/Digits/*.png files.
-func (lib *GlyphExemplarLibrary) loadFromDisk() bool {
-	trainingDir := filepath.Join("testdata", "Digits")
-
-	// Check if directory exists
-	_, err := os.Stat(trainingDir)
+// loadFromEmbed loads templates from the embedded "exemplars/" subdirectory.
+// The set of exemplars is discovered from the directory listing — there is
+// no hardcoded name list to keep in sync with the filesystem.
+func (lib *GlyphExemplarLibrary) loadFromEmbed() {
+	entries, err := fs.ReadDir(exemplarsFS, "exemplars")
 	if err != nil {
-		return false
+		fmt.Fprintf(os.Stderr, "glyph: read embedded exemplars: %v\n", err)
+		return
 	}
 
-	digitNames := []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "slash", "HP", "SP"}
-	loadedCount := 0
-
-	for _, name := range digitNames {
-		filePath := filepath.Join(trainingDir, name+".png")
-
-		// Load PNG file
-		file, err := os.Open(filePath)
-		if err != nil {
-			continue // File not found, skip
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".png")
+		if name == entry.Name() {
+			// Not a .png file; skip.
+			continue
 		}
 
-		img, err := png.Decode(file)
-		file.Close()
-
+		data, err := fs.ReadFile(exemplarsFS, "exemplars/"+entry.Name())
 		if err != nil {
 			continue
 		}
 
-		// Convert PNG to binary image (gray < 150 = foreground/black)
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			continue
+		}
+
 		binary := imageToGrayscaleBinary(img)
 		if len(binary) == 0 {
 			continue
@@ -113,10 +127,7 @@ func (lib *GlyphExemplarLibrary) loadFromDisk() bool {
 		}
 
 		lib.exemplars[char] = normalized
-		loadedCount++
 	}
-
-	return loadedCount > 0
 }
 
 // imageToGrayscaleBinary converts image to binary, gray < 150 = foreground.
