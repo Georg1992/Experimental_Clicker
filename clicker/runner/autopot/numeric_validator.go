@@ -95,12 +95,20 @@ func (v *NumericSafetyValidator) SetThresholds(hpThreshold, spThreshold int) {
 }
 
 // SetPollInterval sets how often to capture and parse numeric data.
+// Locked: run() reads v.pollInterval at start (and is the only reader of
+// the ticker interval), so the setter and reader must be serialized.
 func (v *NumericSafetyValidator) SetPollInterval(d time.Duration) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.pollInterval = d
 }
 
 // SetMinConfidence sets the minimum confidence required to publish safety flags.
+// Locked: publishSafetySnapshot() reads v.minConfidence on every publish, so
+// the setter and the publish-loop reader must be serialized.
 func (v *NumericSafetyValidator) SetMinConfidence(conf float64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.minConfidence = conf
 }
 
@@ -129,7 +137,12 @@ func (v *NumericSafetyValidator) Start(ctx context.Context) {
 // run is the main loop that periodically captures and parses numeric HP/SP,
 // then publishes safety flags.
 func (v *NumericSafetyValidator) run(ctx context.Context) {
-	ticker := time.NewTicker(v.pollInterval)
+	// Snapshot the poll interval under the lock so SetPollInterval callers
+	// are serialized with the read.
+	v.mu.RLock()
+	pollInterval := v.pollInterval
+	v.mu.RUnlock()
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -179,10 +192,14 @@ func (v *NumericSafetyValidator) captureAndPublishSafety() {
 
 // publishSafetySnapshot computes safety flags and publishes immutable snapshot.
 func (v *NumericSafetyValidator) publishSafetySnapshot(state status.NumericRead, found bool, errorReason string) {
-	// Read current thresholds (minimal lock)
+	// Read all config fields under one RLock so the locked setters
+	// (SetThresholds, SetLogFunc, SetPollInterval, SetMinConfidence)
+	// are serialized with these reads.
 	v.mu.RLock()
 	hpThreshold := v.hpThreshold
 	spThreshold := v.spThreshold
+	maxStateAge := v.maxStateAge
+	minConfidence := v.minConfidence
 	v.mu.RUnlock()
 
 	// Build immutable snapshot locally
@@ -199,14 +216,14 @@ func (v *NumericSafetyValidator) publishSafetySnapshot(state status.NumericRead,
 	}
 
 	// Compute HPDoNotPot: true only if HP found, fresh, confident, and above threshold
-	if state.HP.Found && !state.HP.IsStale(v.maxStateAge) && state.HP.Confidence >= v.minConfidence && state.HP.Max > 0 {
+	if state.HP.Found && !state.HP.IsStale(maxStateAge) && state.HP.Confidence >= minConfidence && state.HP.Max > 0 {
 		snapshot.HPDoNotPot = state.HP.Percent > float64(hpThreshold)
 	} else {
 		snapshot.HPDoNotPot = false
 	}
 
 	// Compute SPDoNotPot: true only if SP found, fresh, confident, and above threshold
-	if state.SP.Found && !state.SP.IsStale(v.maxStateAge) && state.SP.Confidence >= v.minConfidence && state.SP.Max > 0 {
+	if state.SP.Found && !state.SP.IsStale(maxStateAge) && state.SP.Confidence >= minConfidence && state.SP.Max > 0 {
 		snapshot.SPDoNotPot = state.SP.Percent > float64(spThreshold)
 	} else {
 		snapshot.SPDoNotPot = false
