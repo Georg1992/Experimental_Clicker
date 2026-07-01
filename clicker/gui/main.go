@@ -15,6 +15,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -64,6 +66,7 @@ type guiApp struct {
 
 	mu             sync.Mutex
 	shutdownOnce   sync.Once
+	logFile        *os.File
 	// starting is true while onStart's background goroutine is wiring
 	// up the viper server + session + runners. It is set on the GUI
 	// thread inside onStart and cleared by either the goroutine on
@@ -91,6 +94,18 @@ func main() {
 	app := &guiApp{timerBindingSlot: -1, keyChainBindingSlot: -1, clickerBindingSlot: -1}
 	defer app.shutdown()
 
+	// Open a persistent log file next to the executable so diagnostics
+	// survive GUI close. Best-effort — if the file can't be created,
+	// logging still works in-memory via the GUI list box.
+	if exe, err := os.Executable(); err == nil {
+		logPath := filepath.Join(filepath.Dir(exe), "clicker.log")
+		if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			app.logFile = f
+			// Stamp the first entry so the user knows where to look.
+			_, _ = f.WriteString(fmt.Sprintf("[%s] Log file: %s\n", time.Now().Format("15:04:05"), logPath))
+		}
+	}
+
 	if err := app.createWindow(); err != nil {
 		walk.MsgBox(nil, "BELARUS CHAMP CLICKER", err.Error(), walk.MsgBoxIconError)
 	}
@@ -114,6 +129,11 @@ func (a *guiApp) shutdown() {
 			a.startupCancel = nil
 		}
 		a.mu.Unlock()
+
+		if a.logFile != nil {
+			_ = a.logFile.Close()
+			a.logFile = nil
+		}
 
 		if r != nil {
 			r.Stop()
@@ -271,10 +291,16 @@ func (a *guiApp) createWindow() error {
 }
 
 func (a *guiApp) appendLog(line string) {
+	stamped := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
+
+	// Write to persistent log file (best-effort — file may be missing).
+	if a.logFile != nil {
+		_, _ = a.logFile.WriteString(stamped + "\n")
+	}
+
 	if a.logList == nil {
 		return
 	}
-	stamped := fmt.Sprintf("[%s] %s", time.Now().Format("15:04:05"), line)
 	a.logItems = append(a.logItems, stamped)
 	// UI update errors are not critical; log display may fail but log entry is recorded
 	_ = a.logList.SetModel(a.logItems)
