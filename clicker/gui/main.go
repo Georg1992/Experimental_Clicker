@@ -481,7 +481,7 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	}
 
 	logFn("Checking VIIPER server...")
-	started, err := ensureViiperServer(ctx)
+	started, err := ensureViiperServer(ctx, logFn)
 	if err != nil {
 		if ctx.Err() != nil {
 			return // Stop clicked; onStop already handled UI

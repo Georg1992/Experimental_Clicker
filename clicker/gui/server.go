@@ -39,7 +39,7 @@ var (
 	viiperTempDir string
 )
 
-func ensureViiperServer(ctx context.Context) (started bool, err error) {
+func ensureViiperServer(ctx context.Context, log func(string)) (started bool, err error) {
 	serverMu.Lock()
 	defer serverMu.Unlock()
 
@@ -51,6 +51,8 @@ func ensureViiperServer(ctx context.Context) (started bool, err error) {
 	if _, err := api.PingCtx(pingCtx); err == nil {
 		return false, nil
 	}
+
+	log("Starting VIIPER server...")
 
 	path, dir, err := extractViiper()
 	if err != nil {
@@ -78,6 +80,7 @@ func ensureViiperServer(ctx context.Context) (started bool, err error) {
 	go discardViiperOutput(stdout)
 	go discardViiperOutput(stderr)
 
+	log("Waiting for VIIPER server...")
 	if err := waitForServer(ctx, runner.DefaultAPIAddr, serverWaitTime); err != nil {
 		killProcessTree(serverPID)
 		_, _ = cmd.Process.Wait()
