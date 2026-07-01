@@ -1,12 +1,17 @@
 package statusui
 
 import (
+	"embed"
 	"errors"
 	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
+	"io/fs"
 )
+
+//go:embed glyphs/*.png
+var embeddedGlyphs embed.FS
 
 var (
 	// ErrPanelNotFound means template matching did not find a status panel.
@@ -64,6 +69,33 @@ func NewPipeline(templatesDir string, minGlyphScore float64) (*Pipeline, error) 
 		return nil, errors.New("statusui: embedded StatusPanel template unavailable")
 	}
 	r, err := NewReader(templatesDir)
+	if err != nil {
+		return nil, err
+	}
+	r.MinGlyphScore = minGlyphScore
+	if r.MinGlyphScore == 0 {
+		r.MinGlyphScore = 0.70
+	}
+	return &Pipeline{
+		template: tpl,
+		locator:  DefaultStatusLineLocator(),
+		reader:   r,
+	}, nil
+}
+
+// NewDefaultPipeline builds a Pipeline from embedded glyph templates.
+// No external file paths are required; suitable for production use.
+func NewDefaultPipeline() (*Pipeline, error) {
+	return NewPipelineFromFS(embeddedGlyphs, "glyphs", 0.70)
+}
+
+// NewPipelineFromFS builds a Pipeline loading glyph templates from fsys/glyphsDir.
+func NewPipelineFromFS(fsys fs.FS, glyphsDir string, minGlyphScore float64) (*Pipeline, error) {
+	tpl := DefaultStatusPanelTemplate()
+	if tpl == nil {
+		return nil, errors.New("statusui: embedded StatusPanel template unavailable")
+	}
+	r, err := NewReaderFromFS(fsys, glyphsDir)
 	if err != nil {
 		return nil, err
 	}

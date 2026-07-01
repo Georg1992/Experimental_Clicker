@@ -42,6 +42,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/png"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -205,6 +206,52 @@ func NewReader(templatesDir string) (*Reader, error) {
 		// double-default in NewReader AND Read).
 		templates: entries,
 	}, nil
+}
+
+// NewReaderFromFS loads glyph templates from an [io/fs.FS].
+// glyphsDir is the directory path inside fsys (e.g. "glyphs").
+// Otherwise identical to NewReader.
+func NewReaderFromFS(fsys fs.FS, glyphsDir string) (*Reader, error) {
+	pattern := glyphsDir + "/*.png"
+	files, err := fs.Glob(fsys, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("statusui: glob %q: %w", pattern, err)
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("statusui: no PNGs in %q", glyphsDir)
+	}
+
+	var entries []templateEntry
+	for _, fp := range files {
+		base := strings.TrimSuffix(filepath.Base(fp), filepath.Ext(fp))
+		r, ok := filenameRune(base)
+		if !ok {
+			continue
+		}
+		f, err := fsys.Open(fp)
+		if err != nil {
+			return nil, fmt.Errorf("statusui: open template %q: %w", fp, err)
+		}
+		img, decErr := png.Decode(f)
+		f.Close()
+		if decErr != nil {
+			return nil, fmt.Errorf("statusui: decode template %q: %w", fp, decErr)
+		}
+		mask := binarize(img)
+		bounds := maskBounds(mask)
+		mask = maskCrop(mask, bounds)
+		entries = append(entries, templateEntry{
+			rune:   r,
+			name:   filepath.Base(fp),
+			bounds: bounds,
+			mask:   mask,
+		})
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("statusui: no recognizable templates in %q (need 0-9, dot, slash, pipe, H, P, S)", glyphsDir)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].rune < entries[j].rune })
+	return &Reader{templates: entries}, nil
 }
 
 // Read runs the full pipeline on strip and returns either a

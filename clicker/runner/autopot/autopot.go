@@ -107,6 +107,11 @@ func (a *AutoPotRunner) resetStabilizers() {
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
+	if useStatusUIPot {
+		a.runStatusUI(ctx, cfg)
+		return
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
