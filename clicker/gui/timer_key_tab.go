@@ -246,7 +246,7 @@ func (a *guiApp) syncTimerKeySettings() {
 	}
 
 	if a.isStarted() {
-		a.startTimerKeyRunner(cfg)
+		a.startTimerKeyRunner(cfg, a.appendLog)
 	}
 }
 
@@ -262,12 +262,12 @@ func (a *guiApp) setTimerKeyConfigEnabled(enabled bool) {
 	}
 }
 
-func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig) {
+func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig, log func(string)) {
 	take, store := makeLifecycleSlot[*runner.TimerKeyRunner](&a.mu, &a.timerKeyRunner)
 	startLifecycle(
 		take, store,
 		"Timer keys",
-		a.appendLog,
+		log,
 		func() runner.InputSession {
 			a.mu.Lock()
 			defer a.mu.Unlock()
@@ -276,7 +276,7 @@ func (a *guiApp) startTimerKeyRunner(cfg runner.TimerKeyConfig) {
 		func() bool { return cfg.AnyActive() },
 		func(sess runner.InputSession) *runner.TimerKeyRunner {
 			cfg.Session = sess
-			cfg.Log = a.appendLog
+			cfg.Log = log
 			return runner.NewTimerKey(cfg)
 		},
 	)

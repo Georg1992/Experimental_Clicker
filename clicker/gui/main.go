@@ -300,12 +300,12 @@ func (a *guiApp) autopotWanted() runner.AutoPotConfig {
 	return cfg
 }
 
-func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
+func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig, log func(string)) {
 	take, store := makeLifecycleSlot[*runner.AutoPotRunner](&a.mu, &a.autopotRunner)
 	startLifecycle(
 		take, store,
 		"AutoPot",
-		a.appendLog,
+		log,
 		func() runner.InputSession {
 			a.mu.Lock()
 			defer a.mu.Unlock()
@@ -314,7 +314,7 @@ func (a *guiApp) startAutoPotRunner(cfg runner.AutoPotConfig) {
 		func() bool { return cfg.HPEnabled || cfg.SPEnabled },
 		func(sess runner.InputSession) *runner.AutoPotRunner {
 			cfg.Session = sess
-			cfg.Log = a.appendLog
+			cfg.Log = log
 			return runner.NewAutoPot(cfg)
 		},
 	)
@@ -548,9 +548,9 @@ func (a *guiApp) startInBackground() {
 	keyChainCfg.Session = session
 	keyChainCfg.Log = logFn
 
-	a.startAutoPotRunner(autopotCfg)
-	a.startTimerKeyRunner(timerCfg)
-	a.startKeyChainRunner(keyChainCfg)
+	a.startAutoPotRunner(autopotCfg, logFn)
+	a.startTimerKeyRunner(timerCfg, logFn)
+	a.startKeyChainRunner(keyChainCfg, logFn)
 
 	a.mu.Lock()
 	// If onStop cleared starting before we reached this point,

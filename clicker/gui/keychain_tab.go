@@ -266,7 +266,7 @@ func (a *guiApp) syncKeyChainSettings() {
 		return
 	}
 
-	a.startKeyChainRunner(cfg)
+	a.startKeyChainRunner(cfg, a.appendLog)
 }
 
 func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
@@ -279,12 +279,12 @@ func (a *guiApp) setKeyChainConfigEnabled(enabled bool) {
 	}
 }
 
-func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig) {
+func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig, log func(string)) {
 	take, store := makeLifecycleSlot[*runner.KeyChainRunner](&a.mu, &a.keyChainRunner)
 	startLifecycle(
 		take, store,
 		"KeyChain",
-		a.appendLog,
+		log,
 		func() runner.InputSession {
 			a.mu.Lock()
 			defer a.mu.Unlock()
@@ -293,7 +293,7 @@ func (a *guiApp) startKeyChainRunner(cfg runner.KeyChainConfig) {
 		func() bool { return cfg.Active() },
 		func(sess runner.InputSession) *runner.KeyChainRunner {
 			cfg.Session = sess
-			cfg.Log = a.appendLog
+			cfg.Log = log
 			return runner.NewKeyChain(cfg)
 		},
 	)

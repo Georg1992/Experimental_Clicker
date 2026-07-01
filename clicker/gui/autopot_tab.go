@@ -270,7 +270,7 @@ func (a *guiApp) syncAutoPotSettings() {
 		return
 	}
 
-	a.startAutoPotRunner(cfg)
+	a.startAutoPotRunner(cfg, a.appendLog)
 }
 
 func (a *guiApp) setAutoPotConfigEnabled(enabled bool) {
