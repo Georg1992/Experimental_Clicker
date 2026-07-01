@@ -458,6 +458,7 @@ func (a *guiApp) startInBackground() {
 		a.mainWindow.Synchronize(func() { a.setStarted(false) })
 	}
 
+	logFn("Checking VIIPER server...")
 	started, err := ensureViiperServer()
 	if err != nil {
 		logFn(fmt.Sprintf("Start failed: %v", err))
