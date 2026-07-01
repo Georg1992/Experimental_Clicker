@@ -30,7 +30,7 @@ func templatePath(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Join(filepath.Dir(file), "StatusPanel.png")
+	return filepath.Join(filepath.Dir(file), "assets", "StatusPanel.png")
 }
 
 func loadPNG(t *testing.T, path string) image.Image {

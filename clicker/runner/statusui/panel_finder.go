@@ -9,7 +9,7 @@ import (
 	"sync"
 )
 
-//go:embed StatusPanel.png
+//go:embed assets/StatusPanel.png
 var statusPanelTemplatePNG []byte
 
 var (

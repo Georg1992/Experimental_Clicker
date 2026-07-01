@@ -210,3 +210,107 @@ func TestPipeline_VisualValidation_AAAndII(t *testing.T) {
 		})
 	}
 }
+
+// BenchmarkParseStrip_Cold measures a single ParseStrip call on a fresh
+// Reader that has no previous-glyph hints — every glyph goes through the
+// full template scan.
+func BenchmarkParseStrip_Cold(b *testing.B) {
+	pipeline, err := NewPipeline(statusGlyphsDirB(b), 0.70)
+	if err != nil {
+		b.Fatalf("NewPipeline: %v", err)
+	}
+	src := loadPNGImageB(b, filepath.Join(statusFixturesDirB(b), "aa.png"))
+	full, err := pipeline.RecognizeScreen(src)
+	if err != nil {
+		b.Fatalf("RecognizeScreen: %v", err)
+	}
+	strip := full.StripImage
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Reset hints before each call so every iteration is a cold parse.
+		pipeline.reader.mu.Lock()
+		pipeline.reader.prevGlyphs = nil
+		pipeline.reader.mu.Unlock()
+		if _, err := pipeline.ParseStrip(strip); err != nil {
+			b.Fatalf("ParseStrip: %v", err)
+		}
+	}
+}
+
+// BenchmarkParseStrip_Warm measures ParseStrip when the Reader already has
+// prevGlyphs from the previous call — the common steady-state case in the
+// autopot loop where HP/SP are unchanged between frames.
+func BenchmarkParseStrip_Warm(b *testing.B) {
+	pipeline, err := NewPipeline(statusGlyphsDirB(b), 0.70)
+	if err != nil {
+		b.Fatalf("NewPipeline: %v", err)
+	}
+	src := loadPNGImageB(b, filepath.Join(statusFixturesDirB(b), "aa.png"))
+	full, err := pipeline.RecognizeScreen(src)
+	if err != nil {
+		b.Fatalf("RecognizeScreen: %v", err)
+	}
+	strip := full.StripImage
+	// Prime the hints with one cold parse.
+	if _, err := pipeline.ParseStrip(strip); err != nil {
+		b.Fatalf("prime ParseStrip: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := pipeline.ParseStrip(strip); err != nil {
+			b.Fatalf("ParseStrip: %v", err)
+		}
+	}
+}
+
+// BenchmarkRecognizeScreen measures the full pipeline including panel
+// detection — this is the cost of the initial acquisition step.
+func BenchmarkRecognizeScreen(b *testing.B) {
+	pipeline, err := NewPipeline(statusGlyphsDirB(b), 0.70)
+	if err != nil {
+		b.Fatalf("NewPipeline: %v", err)
+	}
+	src := loadPNGImageB(b, filepath.Join(statusFixturesDirB(b), "aa.png"))
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := pipeline.RecognizeScreen(src); err != nil {
+			b.Fatalf("RecognizeScreen: %v", err)
+		}
+	}
+}
+
+// helpers for benchmarks (b *testing.B variants of the test helpers above)
+
+func statusRootDirB(b *testing.B) string {
+	b.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		b.Fatal("runtime.Caller failed")
+	}
+	return filepath.Dir(file)
+}
+
+func statusGlyphsDirB(b *testing.B) string {
+	return filepath.Join(statusRootDirB(b), "glyphs")
+}
+
+func statusFixturesDirB(b *testing.B) string {
+	return filepath.Join(statusRootDirB(b), "..", "autopot", "testdata")
+}
+
+func loadPNGImageB(b *testing.B, path string) image.Image {
+	b.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		b.Fatalf("open %s: %v", path, err)
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		b.Fatalf("decode %s: %v", path, err)
+	}
+	return img
+}
