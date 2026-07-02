@@ -200,18 +200,32 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 	}
 }
 
-// validateWithLog captures a full screenshot, runs panel validation, and
-// logs failures via log. Successful detections are silent (the panel
-// position is relayed through OnStatusParsed).
+// validateWithLog captures a full screenshot, runs panel validation.
+// Logs failures only on state transitions (panel lost, panel found)
+// to avoid spamming the GUI on every retry. Screen capture failures
+// are logged once then suppressed until successful.
 func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(string)) error {
 	screen, err := win.CaptureFullScreen()
 	if err != nil {
-		log(fmt.Sprintf("autopot statusui: screen capture failed: %v", err))
+		// Only log the first consecutive capture failure.
+		if a.wasPanelFound {
+			log(fmt.Sprintf("autopot statusui: screen capture failed: %v", err))
+		}
 		return err
 	}
 	if err := poller.Validate(screen); err != nil {
-		log(fmt.Sprintf("autopot statusui: failed to detect status panel: %v", err))
+		// Panel lost: log once on the transition, then stay silent.
+		if a.wasPanelFound {
+			log("autopot statusui: status panel lost, searching...")
+			a.wasPanelFound = false
+		}
 		return err
+	}
+	// Panel found (or re-acquired). Log only when transitioning from
+	// a failed/missing state to found.
+	if !a.wasPanelFound {
+		log("autopot statusui: status panel found")
+		a.wasPanelFound = true
 	}
 	return nil
 }

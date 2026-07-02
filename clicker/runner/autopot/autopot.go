@@ -41,6 +41,12 @@ type AutoPotRunner struct {
 
 	hpStabilizer *BarStabilizer
 	spStabilizer *BarStabilizer
+
+	// wasPanelFound tracks whether the status panel was successfully
+	// located at least once. Used by validateWithLog to debounce log
+	// messages: failures are only logged on a state transition
+	// (found→lost, lost→found), not on every retry.
+	wasPanelFound bool
 }
 
 // NewAutoPot constructs an AutoPotRunner with the given initial config.
@@ -106,6 +112,7 @@ func (a *AutoPotRunner) settings() AutoPotConfig { return a.lc.Settings() }
 func (a *AutoPotRunner) resetStabilizers() {
 	a.hpStabilizer.Reset()
 	a.spStabilizer.Reset()
+	a.wasPanelFound = false
 }
 
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
