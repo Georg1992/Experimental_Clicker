@@ -13,9 +13,12 @@ import (
 // statusUIPollInterval is how often the strip is captured and parsed.
 const statusUIPollInterval = 50 * time.Millisecond
 
-// maxConsecutiveFails is the number of consecutive OCR failures (validation
-// or parse) after which runStatusUI returns an error to trigger the pixel-bar
-// fallback. Also used by healUntilStatusUI as its own escape hatch.
+// maxConsecutiveFails is the number of consecutive OCR parse failures after
+// which runStatusUI returns an error to trigger the pixel-bar fallback.
+// Panel-detection (validation) failures do NOT count — the panel search
+// retries every 5 s forever without triggering fallback, so the statusui
+// keeps trying if the panel is temporarily off-screen.
+// Also used by healUntilStatusUI as its escape hatch (counts both).
 const maxConsecutiveFails = 10
 
 // runStatusUI is the statusui OCR-based heal loop. It returns nil when
@@ -52,11 +55,12 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error 
 		}
 
 		if poller.NeedsValidation() {
+			// Panel not found is not a fatal failure — the game window
+			// may be minimised or resolution changed. Keep retrying
+			// every 5 s (via the poller's revalidation interval) without
+			// counting toward the fallback threshold. Only OCR parse
+			// errors count.
 			if err := a.validateWithLog(poller, cfg.Log); err != nil {
-				consecutiveFails++
-				if consecutiveFails >= maxConsecutiveFails {
-					return fmt.Errorf("status panel detection failed %d times", consecutiveFails)
-				}
 				timing.Sleep(ctx, timing.CaptureRetryDelay)
 				continue
 			}

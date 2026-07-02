@@ -241,6 +241,8 @@ func normalizeBarRead(img image.Image, r Rect, hpBar bool, read BarRead) BarRead
 
 // ReadHPFill reads the fill percentage of an HP bar from the image.
 // Returns a BarRead with the fill percentage and pixel counts.
+// When no fill pixels are found and the bar has no HP-colored pixels at all
+// (player is dead, bar is empty), returns Found=false to prevent potion spam.
 func ReadHPFill(img image.Image, hp Rect) BarRead {
 	if hp.W < 1 || hp.H < 1 {
 		return BarRead{Found: false}
@@ -257,6 +259,9 @@ func ReadHPFill(img image.Image, hp Rect) BarRead {
 		}
 	}
 	if best.FilledWidth == 0 {
+		if barHasNoColorPixels(img, hp, true) {
+			return BarRead{Found: false, FullWidth: hp.W}
+		}
 		return normalizeBarRead(img, hp, true, readBarFillSingleRow(img, hp.X, hp.Y, hp.W, isHPFillRead))
 	}
 	return normalizeBarRead(img, hp, true, best)
@@ -275,6 +280,8 @@ func isHPFillRead(r, g, b uint8) bool {
 
 // ReadSPFill reads the fill percentage of an SP bar from the image.
 // Similar to ReadHPFill but uses SP color detection.
+// When no fill pixels are found and the bar has no SP-colored pixels at all,
+// returns Found=false to prevent potion spam.
 func ReadSPFill(img image.Image, sp Rect) BarRead {
 	if sp.W < 1 || sp.H < 1 {
 		return BarRead{Found: false}
@@ -284,7 +291,11 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 		return BarRead{Found: false}
 	}
 	if sp.H >= 3 {
-		return normalizeBarRead(img, sp, false, readBarFillSingleRow(img, sp.X, sp.Y+1, sp.W, isSPFill))
+		br := readBarFillSingleRow(img, sp.X, sp.Y+1, sp.W, isSPFill)
+		if br.FilledWidth == 0 && barHasNoColorPixels(img, sp, false) {
+			return BarRead{Found: false, FullWidth: sp.W}
+		}
+		return normalizeBarRead(img, sp, false, br)
 	}
 	best := BarRead{Found: true, FullWidth: sp.W}
 	for row := 0; row < sp.H; row++ {
@@ -292,6 +303,9 @@ func ReadSPFill(img image.Image, sp Rect) BarRead {
 		if br.FilledWidth > best.FilledWidth {
 			best = br
 		}
+	}
+	if best.FilledWidth == 0 && barHasNoColorPixels(img, sp, false) {
+		return BarRead{Found: false, FullWidth: sp.W}
 	}
 	return normalizeBarRead(img, sp, false, best)
 }
@@ -870,6 +884,25 @@ func extendSPBarLeft(img image.Image, y, fromX int) int {
 		}
 	}
 	return left
+}
+
+// barHasNoColorPixels checks whether a bar rect contains zero colored pixels
+// of the relevant type (HP green/red/yellow or SP blue/cyan). Used to detect
+// a dead bar (player KO'd, bar fully empty) so we don't spam potions.
+func barHasNoColorPixels(img image.Image, r Rect, hpBar bool) bool {
+	isPixel := IsHPPixel
+	if !hpBar {
+		isPixel = IsSPPixel
+	}
+	for y := r.Y; y < r.Y+r.H; y++ {
+		for x := r.X; x < r.X+r.W; x++ {
+			rp, gp, bp := pixelAt(img, x, y)
+			if isPixel(rp, gp, bp) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func readBarFillSingleRow(img image.Image, x0, y, w int, isPixel func(r, g, b uint8) bool) BarRead {
