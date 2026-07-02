@@ -47,7 +47,7 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 	if ctx.Err() != nil {
 		return BarReadResult{Err: ctx.Err()}
 	}
-	img, _, err := win.CapturePlayerBarSearch()
+	img, roi, err := win.CapturePlayerBarSearch()
 	if err != nil {
 		return BarReadResult{Err: err}
 	}
@@ -59,7 +59,9 @@ func (r *pixelBarReader) ReadBars(ctx context.Context) BarReadResult {
 		// it impossible to accumulate the 3 low reads needed for
 		// BarStatusLow. By skipping UpdatePair, the stabiliser state
 		// (fullLatched, lowStreak) survives transient failures.
-		return BarReadResult{Err: fmt.Errorf("pixel bars not found")}
+		// Include ROI bounds so the user can verify the search region
+		// matches their screen / game UI layout.
+		return BarReadResult{Err: fmt.Errorf("pixel bars not found (ROI %d,%d %dx%d)", roi.X, roi.Y, roi.W, roi.H)}
 	}
 	hp := r.hpStab.UpdatePair(img, true, mapped, pairOK)
 	sp := r.spStab.UpdatePair(img, false, mapped, pairOK)
