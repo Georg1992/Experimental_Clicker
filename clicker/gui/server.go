@@ -91,7 +91,6 @@ func ensureViiperServer(ctx context.Context, log func(string)) (started bool, er
 	defer serverMu.Unlock()
 
 	addr := runner.DefaultAPIAddr
-	log(fmt.Sprintf("VIIPER addr: %s", addr))
 
 	// Quick ping with a short timeout — don't hold serverMu while a
 	// stale listener forces TCP to retransmit for minutes.
@@ -99,20 +98,15 @@ func ensureViiperServer(ctx context.Context, log func(string)) (started bool, er
 	defer pingCancel()
 	api := viiperclient.New(addr)
 	if _, err := api.PingCtx(pingCtx); err == nil {
-		log("VIIPER server already running on " + addr)
+		log("VIIPER already running")
 		return false, nil
 	}
-	log("No existing VIIPER server found")
 
 	path, dir, err := extractViiper()
 	if err != nil {
 		return false, err
 	}
 	viiperTempDir = dir
-
-	log(fmt.Sprintf("Launching: %s server", path))
-	log(fmt.Sprintf("Working dir: inherited from parent process"))
-	log("Env: inherited from parent (set VIIPER_API_ADDR to override port)")
 
 	cmd := exec.Command(path, "server")
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
@@ -132,12 +126,11 @@ func ensureViiperServer(ctx context.Context, log func(string)) (started bool, er
 		return false, fmt.Errorf("start server: %w", err)
 	}
 	serverPID = cmd.Process.Pid
-	log(fmt.Sprintf("VIIPER PID: %d", serverPID))
 
 	go forwardOutput(stdout, ring, log, "viiper")
 	go forwardOutput(stderr, ring, log, "viiper")
 
-	log(fmt.Sprintf("Waiting for ping on %s (up to %s)...", addr, serverWaitTime))
+	log(fmt.Sprintf("Waiting for VIIPER (up to %s)...", serverWaitTime))
 	if err := waitForServer(ctx, addr, serverWaitTime, log); err != nil {
 		killProcessTree(serverPID)
 		_, _ = cmd.Process.Wait() // populate cmd.ProcessState for diagnostics
@@ -150,7 +143,6 @@ func ensureViiperServer(ctx context.Context, log func(string)) (started bool, er
 
 	serverCmd = cmd
 	serverStarted = true
-	log("VIIPER ping OK")
 	return true, nil
 }
 
@@ -158,15 +150,56 @@ func ensureViiperServer(ctx context.Context, log func(string)) (started bool, er
 // output capture
 // ---------------------------------------------------------------------------
 
-// forwardOutput reads lines from r line-by-line, appends each to ring, and
-// forwards every line to log with the given prefix (e.g. "[viiper] line").
+// forwardOutput reads lines from r line-by-line. Every line (raw) is added
+// to the ring buffer for diagnostics. Only key events are forwarded to the
+// GUI log in clean, human-readable form — ANSI codes and timestamps are
+// stripped, and internal detail lines are skipped entirely.
 func forwardOutput(r io.Reader, ring *outputRing, log func(string), prefix string) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
-		line := scanner.Text()
-		ring.add(line)
-		log(fmt.Sprintf("[%s] %s", prefix, line))
+		raw := scanner.Text()
+		ring.add(raw)
+
+		// Strip ANSI escape sequences so we can match on readable text.
+		clean := stripANSI(raw)
+
+		// Only forward key events; everything else is ring-only.
+		switch {
+		case strings.Contains(clean, "ERROR"):
+			log(fmt.Sprintf("[%s] %s", prefix, clean))
+		case strings.Contains(clean, "Starting VIIPER"):
+			log("VIIPER server started")
+		case strings.Contains(clean, "API listening"):
+			// Extract port for a clean message.
+			if idx := strings.LastIndex(clean, ":"); idx >= 0 {
+				log("VIIPER API ready on port " + clean[idx+1:])
+			} else {
+				log("VIIPER API ready")
+			}
+		}
 	}
+}
+
+// stripANSI removes ANSI escape codes (CSI sequences like \x1b[90m) from s.
+func stripANSI(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inEscape := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			inEscape = true
+			i++ // skip '['
+			continue
+		}
+		if inEscape {
+			if (s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		_ = b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +289,7 @@ func dumpViiperDiagnostics(cmd *exec.Cmd, ring *outputRing, addr string, log fun
 	log("--- end diagnostics ---")
 }
 
-// stripPort extracts the port number from an address like "tcp://127.0.0.1:3240".
+// stripPort extracts the port number from a host:port address like "127.0.0.1:3242".
 func stripPort(addr string) string {
 	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
 		return addr[idx+1:]

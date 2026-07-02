@@ -507,7 +507,7 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 	}
 
 	logFn("Checking VIIPER server...")
-	started, err := ensureViiperServer(ctx, logFn)
+	_, err := ensureViiperServer(ctx, logFn)
 	if err != nil {
 		if ctx.Err() != nil {
 			return // Stop clicked; onStop already handled UI
@@ -515,11 +515,6 @@ func (a *guiApp) startInBackground(ctx context.Context) {
 		logFn(fmt.Sprintf("Start failed: %v", err))
 		finishFailure()
 		return
-	}
-	if started {
-		logFn("VIIPER server started")
-	} else {
-		logFn("VIIPER server already running")
 	}
 
 	logFn("Opening VIIPER session...")
