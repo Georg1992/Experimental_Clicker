@@ -75,11 +75,21 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error 
 		notifyStatus(cfg, poller, status)
 
 		if cfg.HPEnabled && status.HPMax > 0 && status.HP*100/status.HPMax < cfg.HPThreshold {
-			a.healUntilStatusUI(ctx, poller, true)
+			if a.healUntilStatusUI(ctx, poller, true) {
+				consecutiveFails++
+				if consecutiveFails >= maxConsecutiveFails {
+					return fmt.Errorf("status OCR heal failed %d times", consecutiveFails)
+				}
+			}
 			continue
 		}
 		if cfg.SPEnabled && status.SPMax > 0 && status.SP*100/status.SPMax < cfg.SPThreshold {
-			a.healUntilStatusUI(ctx, poller, false)
+			if a.healUntilStatusUI(ctx, poller, false) {
+				consecutiveFails++
+				if consecutiveFails >= maxConsecutiveFails {
+					return fmt.Errorf("status OCR heal failed %d times", consecutiveFails)
+				}
+			}
 			continue
 		}
 
@@ -89,14 +99,17 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error 
 
 // healUntilStatusUI presses the potion key and waits until the relevant
 // stat rises above the configured threshold, mirroring the behaviour of
-// the pixel-bar healUntil. Returns early (fail-open) if OCR validation or
-// parsing fails maxConsecutiveFails times consecutively — this prevents
-// an infinite sub-loop when the status panel becomes unreadable mid-heal.
-func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.StripPoller, hpBar bool) {
+// the pixel-bar healUntil.
+//
+// Returns true if it bailed out due to maxConsecutiveFails OCR failures
+// — the caller should treat this as a failure and consider falling back.
+// Returns false on normal exit (heal complete, ctx cancel, healTarget
+// disabled).
+func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.StripPoller, hpBar bool) (bailed bool) {
 	healFails := 0
 	for {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 
 		cfg := a.settings()
@@ -108,14 +121,14 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 
 		vk, ok := healTarget(cfg, hpBar)
 		if !ok {
-			return
+			return false
 		}
 
 		if poller.NeedsValidation() {
 			if err := a.validateWithLog(poller, cfg.Log); err != nil {
 				healFails++
 				if healFails >= maxConsecutiveFails {
-					return
+					return true
 				}
 				timing.Sleep(ctx, statusUIPollInterval)
 				continue
@@ -125,7 +138,7 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 		if err != nil {
 			healFails++
 			if healFails >= maxConsecutiveFails {
-				return
+				return true
 			}
 			timing.Sleep(ctx, statusUIPollInterval)
 			continue
@@ -134,29 +147,29 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 
 		pct, threshold := statPercent(status, cfg, hpBar)
 		if pct >= threshold {
-			return
+			return false
 		}
 		before := currentVal(status, hpBar)
 
 		if tapErr := sess.TapKey(vk, timing.KeyTapHold); tapErr != nil {
 			cfg.Log(fmt.Sprintf("Key VK_0x%02X failed: %v", vk, tapErr))
-			return
+			return false
 		}
 
 		// Wait for value to rise above the pre-press reading.
 		for {
 			if ctx.Err() != nil {
-				return
+				return false
 			}
 			cfg = a.settings()
 			if _, ok := healTarget(cfg, hpBar); !ok {
-				return
+				return false
 			}
 			if poller.NeedsValidation() {
 				if err := a.validateWithLog(poller, cfg.Log); err != nil {
 					healFails++
 					if healFails >= maxConsecutiveFails {
-						return
+						return true
 					}
 					timing.Sleep(ctx, statusUIPollInterval)
 					continue
@@ -166,7 +179,7 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 			if err != nil {
 				healFails++
 				if healFails >= maxConsecutiveFails {
-					return
+					return true
 				}
 				continue
 			}
@@ -174,7 +187,7 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 			notifyStatus(cfg, poller, status)
 			pct, threshold = statPercent(status, cfg, hpBar)
 			if pct >= threshold {
-				return
+				return false
 			}
 			if currentVal(status, hpBar) > before {
 				break
