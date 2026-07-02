@@ -10,28 +10,35 @@ import (
 	"experimental-clicker/runner/statusui"
 )
 
-// useStatusUIPot switches the autopot heal loop to the statusui OCR-based
-// reader instead of the pixel-bar path. Flip to false to restore the
-// original bar reader.
-const useStatusUIPot = true
-
 // statusUIPollInterval is how often the strip is captured and parsed.
 const statusUIPollInterval = 100 * time.Millisecond
 
-// runStatusUI is the statusui-backed heal loop. It is called from run()
-// when useStatusUIPot is true and returns when ctx is cancelled.
-func (a *AutoPotRunner) runStatusUI(ctx context.Context, startCfg AutoPotConfig) {
+// runStatusUI is the statusui OCR-based heal loop. It returns nil when
+// ctx is cancelled (normal Stop). It returns a non-nil error when the
+// pipeline cannot be initialised, or when OCR fails too many times in a
+// row at runtime — the caller should fall back to the pixel-bar reader.
+func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error {
+	// Respect cancellation immediately so a Stop click during pipeline
+	// init returns nil (normal Stop) rather than a fallback error.
+	if ctx.Err() != nil {
+		return nil
+	}
+
 	pipeline, err := statusui.NewDefaultPipeline()
 	if err != nil {
-		startCfg.Log(fmt.Sprintf("autopot statusui: cannot init pipeline: %v", err))
-		return
+		return fmt.Errorf("cannot init pipeline: %v", err)
 	}
 	poller := statusui.NewStripPoller(pipeline)
+
+	// If OCR validation or parsing fails this many times in a row,
+	// give up and let the caller fall back to the pixel-bar reader.
+	const maxConsecutiveFails = 10
+	consecutiveFails := 0
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
 
@@ -44,6 +51,10 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, startCfg AutoPotConfig)
 
 		if poller.NeedsValidation() {
 			if err := a.validateWithLog(poller, cfg.Log); err != nil {
+				consecutiveFails++
+				if consecutiveFails >= maxConsecutiveFails {
+					return fmt.Errorf("status panel detection failed %d times", consecutiveFails)
+				}
 				timing.Sleep(ctx, timing.CaptureRetryDelay)
 				continue
 			}
@@ -51,9 +62,14 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, startCfg AutoPotConfig)
 
 		status, parseErr := captureAndParse(poller)
 		if parseErr != nil {
+			consecutiveFails++
+			if consecutiveFails >= maxConsecutiveFails {
+				return fmt.Errorf("status OCR parse failed %d times", consecutiveFails)
+			}
 			timing.Sleep(ctx, statusUIPollInterval)
 			continue
 		}
+		consecutiveFails = 0 // reset on success
 		notifyStatus(cfg, poller, status)
 
 		if cfg.HPEnabled && status.HPMax > 0 && status.HP*100/status.HPMax < cfg.HPThreshold {

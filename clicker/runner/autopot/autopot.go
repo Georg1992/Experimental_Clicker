@@ -111,11 +111,16 @@ func (a *AutoPotRunner) resetStabilizers() {
 func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 	defer a.resetStabilizers()
 
-	if useStatusUIPot {
-		a.runStatusUI(ctx, cfg)
-		return
+	// Try the statusui OCR-based reader first. If the pipeline fails to
+	// initialise (e.g. missing glyphs, screen resolution issues), fall
+	// back to the pixel-bar reader transparently.
+	if err := a.runStatusUI(ctx, cfg); err != nil {
+		cfg.Log(fmt.Sprintf("autopot: statusui unavailable, falling back to pixel-bar: %v", err))
+	} else {
+		return // normal Stop via ctx cancel
 	}
 
+	// Pixel-bar fallback path.
 	for {
 		select {
 		case <-ctx.Done():
