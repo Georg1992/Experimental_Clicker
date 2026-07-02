@@ -197,6 +197,18 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 				cfg.Log(fmt.Sprintf("autopot: pixel read failed: %v", result.Err))
 				loggedPixelFail = true
 			}
+			// Even when pixel is failing, keep probing OCR recovery every 5s.
+			if reader == pixel && hasOCR && time.Now().After(nextOCRRetry) {
+				nextOCRRetry = time.Now().Add(statusUIRetryInterval)
+				probe := ocr.ReadBars(ctx)
+				if probe.Err == nil {
+					cfg.Log("autopot: statusui recovered, switching back")
+					reader = ocr
+					setMode(cfg.OnStatusUIMode, "OCR")
+					loggedPixelFail = false
+					continue
+				}
+			}
 			timing.Sleep(ctx, timing.CaptureRetryDelay)
 			continue
 		}
