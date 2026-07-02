@@ -5,17 +5,22 @@
 // Pipeline (executed on every Reader.Read call):
 //
 //	strip Image → binarize (dark OR red) →
-//	  dilate1 (1 px N4 — bridges sub-pixel horizontal/vertical
-//	          anti-alias gaps INSIDE a glyph) →
-//	    tight crop + 8-connected component split (floodFillCC
-//	          joins diagonally-connected pixels the 4-way rule
-//	          would split — e.g. '7' crossbar + diagonal stem) →
-//	      per-component resize + nearest-neighbor template match →
-//	        assembled text → regex parse → value validation → Result.
+//	  tight crop + 8-connected component split (floodFillCC
+//	        joins diagonally-connected pixels the 4-way rule
+//	        would split — e.g. '7' crossbar + diagonal stem) →
+//	    per-component resize + nearest-neighbor template match →
+//	      assembled text → regex parse → value validation → Result.
 //
 // Color tolerance is built into binarization: dark text and red
 // text (low HP/SP state) become the same foreground mask, so
 // font-color changes do not affect the read.
+//
+// The reader uses a per-frame glyph hint to short-circuit template
+// scanning: when the component count matches the previous frame,
+// each glyph is tested against the prior frame's glyph first at a
+// high confidence threshold (0.90). If it matches, the full O(n)
+// template scan is skipped. This makes stable HP/SP reads O(1)
+// per glyph; only changed values pay the full scan cost.
 //
 // The reader is constructed once via NewReader(templatesDir),
 // which loads every PNG from templates/glyphs/ and pre-binarizes
@@ -274,12 +279,11 @@ func (r *Reader) Read(strip image.Image) Result {
 		minScore = 0.70
 	}
 
-	preMask := binarize(strip)
-	mask := preMask
+	mask := binarize(strip)
 	bounds := maskBounds(mask)
 	if bounds.Empty() {
 		res := Result{OK: false, Reason: "no_components"}
-		emitDebug(debug, debugDir, strip, preMask, mask, image.Rectangle{}, nil, res)
+		emitDebug(debug, debugDir, strip, mask, bounds, nil, res)
 		return res
 	}
 	cropped := maskCrop(mask, bounds)
@@ -288,7 +292,7 @@ func (r *Reader) Read(strip image.Image) Result {
 	comps := findComponents(cropped, image.Rect(0, 0, cropW, cropH))
 	if len(comps) == 0 {
 		res := Result{OK: false, Reason: "no_components"}
-		emitDebug(debug, debugDir, strip, preMask, mask, bounds, nil, res)
+		emitDebug(debug, debugDir, strip, mask, bounds, nil, res)
 		return res
 	}
 
@@ -322,7 +326,7 @@ func (r *Reader) Read(strip image.Image) Result {
 				Text:       tail,
 				Confidence: mean(scores),
 			}
-			emitDebug(debug, debugDir, strip, preMask, mask, bounds, matches, res)
+			emitDebug(debug, debugDir, strip, mask, bounds, matches, res)
 			return res
 		}
 		text.WriteRune(ch)
@@ -338,7 +342,7 @@ func (r *Reader) Read(strip image.Image) Result {
 	if err != nil {
 		res.Reason = "parse_failed"
 		res.OK = false
-		emitDebug(debug, debugDir, strip, preMask, mask, bounds, matches, res)
+		emitDebug(debug, debugDir, strip, mask, bounds, matches, res)
 		return res
 	}
 	res.HP = hp
@@ -349,7 +353,7 @@ func (r *Reader) Read(strip image.Image) Result {
 	if !validateValues(hp, hpMax, sp, spMax) {
 		res.Reason = "value_validation_failed"
 		res.OK = false
-		emitDebug(debug, debugDir, strip, preMask, mask, bounds, matches, res)
+		emitDebug(debug, debugDir, strip, mask, bounds, matches, res)
 		return res
 	}
 
@@ -362,7 +366,7 @@ func (r *Reader) Read(strip image.Image) Result {
 	r.mu.Lock()
 	r.prevGlyphs = glyphs
 	r.mu.Unlock()
-	emitDebug(debug, debugDir, strip, preMask, mask, bounds, matches, res)
+	emitDebug(debug, debugDir, strip, mask, bounds, matches, res)
 	return res
 }
 
@@ -836,19 +840,14 @@ func readPNGFile(path string) (image.Image, error) {
 	return img, nil
 }
 
-// emitDebug writes mask_pre_morph.png (raw binarize, before
-// dilate1), mask_post_morph.png (legacy alias: mask.png with
-// identical content; post-dilate), components.png (post-CC red
-// bboxes on the strip), one glyph_NN_<char>_S.SS.png per
-// candidate, and recognized.txt into debDir. The pre/post
-// morph pair is the segmentation debugging trio — a diff
-// shows whether anti-alias-fragmented CCs got bridged before
-// template matching. debDir is created if missing. Write
-// failures are swallowed silently — debug writes must never
-// cause Read to return a fake success. Returns nothing.
+// emitDebug writes mask.png (binarized foreground mask), components.png
+// (post-CC red bboxes on the strip), one glyph_NN_<char>_S.SS.png per
+// candidate, and recognized.txt into debDir. debDir is created if
+// missing. Write failures are swallowed silently — debug writes must
+// never cause Read to return a fake success. Returns nothing.
 func emitDebug(
 	enabled bool, debDir string,
-	strip image.Image, preMask, mask [][]bool, bounds image.Rectangle,
+	strip image.Image, mask [][]bool, bounds image.Rectangle,
 	matches []matchRec, res Result,
 ) {
 	if !enabled || debDir == "" {
@@ -857,30 +856,7 @@ func emitDebug(
 	if err := os.MkdirAll(debDir, 0o755); err != nil {
 		return
 	}
-	// 1a. mask_pre_morph.png — raw binarized mask BEFORE dilate1.
-	// Side-by-side with mask_post_morph.png this is the
-	// segmentation diff: pixels that flipped from background to
-	// foreground are the anti-alias gaps dilate bridged.
-	pmw := maskWidth(preMask)
-	pmh := maskHeight(preMask)
-	if pmw > 0 && pmh > 0 {
-		gray := image.NewGray(image.Rect(0, 0, pmw, pmh))
-		for y := 0; y < pmh; y++ {
-			for x := 0; x < pmw; x++ {
-				if preMask[y][x] {
-					gray.SetGray(x, y, color.Gray{Y: 0})
-				} else {
-					gray.SetGray(x, y, color.Gray{Y: 255})
-				}
-			}
-		}
-		_ = os.WriteFile(filepath.Join(debDir, "mask_pre_morph.png"), encodePNG(gray), 0o644)
-	}
-
-	// 1b. mask_post_morph.png + legacy alias mask.png — foreground
-	// mask AFTER dilate1. This is what findComponents sees.
-	// Together with mask_pre_morph.png it shows which anti-alias
-	// gaps got bridged before CC detection.
+	// mask.png — binarized foreground mask fed to findComponents.
 	mw := maskWidth(mask)
 	mh := maskHeight(mask)
 	if mw > 0 && mh > 0 {
@@ -894,8 +870,7 @@ func emitDebug(
 				}
 			}
 		}
-		_ = os.WriteFile(filepath.Join(debDir, "mask_post_morph.png"), encodePNG(gray), 0o644)
-		_ = os.WriteFile(filepath.Join(debDir, "mask.png"), encodePNG(gray), 0o644) // legacy alias
+		_ = os.WriteFile(filepath.Join(debDir, "mask.png"), encodePNG(gray), 0o644)
 	}
 
 	// 2. components.png — copy of strip with red bboxes drawn

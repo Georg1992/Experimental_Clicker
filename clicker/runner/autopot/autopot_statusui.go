@@ -11,7 +11,12 @@ import (
 )
 
 // statusUIPollInterval is how often the strip is captured and parsed.
-const statusUIPollInterval = 100 * time.Millisecond
+const statusUIPollInterval = 50 * time.Millisecond
+
+// maxConsecutiveFails is the number of consecutive OCR failures (validation
+// or parse) after which runStatusUI returns an error to trigger the pixel-bar
+// fallback. Also used by healUntilStatusUI as its own escape hatch.
+const maxConsecutiveFails = 10
 
 // runStatusUI is the statusui OCR-based heal loop. It returns nil when
 // ctx is cancelled (normal Stop). It returns a non-nil error when the
@@ -30,9 +35,6 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error 
 	}
 	poller := statusui.NewStripPoller(pipeline)
 
-	// If OCR validation or parsing fails this many times in a row,
-	// give up and let the caller fall back to the pixel-bar reader.
-	const maxConsecutiveFails = 10
 	consecutiveFails := 0
 
 	for {
@@ -87,8 +89,11 @@ func (a *AutoPotRunner) runStatusUI(ctx context.Context, _ AutoPotConfig) error 
 
 // healUntilStatusUI presses the potion key and waits until the relevant
 // stat rises above the configured threshold, mirroring the behaviour of
-// the pixel-bar healUntil.
+// the pixel-bar healUntil. Returns early (fail-open) if OCR validation or
+// parsing fails maxConsecutiveFails times consecutively — this prevents
+// an infinite sub-loop when the status panel becomes unreadable mid-heal.
 func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.StripPoller, hpBar bool) {
+	healFails := 0
 	for {
 		if ctx.Err() != nil {
 			return
@@ -108,15 +113,24 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 
 		if poller.NeedsValidation() {
 			if err := a.validateWithLog(poller, cfg.Log); err != nil {
+				healFails++
+				if healFails >= maxConsecutiveFails {
+					return
+				}
 				timing.Sleep(ctx, statusUIPollInterval)
 				continue
 			}
 		}
 		status, err := captureAndParse(poller)
 		if err != nil {
+			healFails++
+			if healFails >= maxConsecutiveFails {
+				return
+			}
 			timing.Sleep(ctx, statusUIPollInterval)
 			continue
 		}
+		healFails = 0 // reset on successful parse
 
 		pct, threshold := statPercent(status, cfg, hpBar)
 		if pct >= threshold {
@@ -139,12 +153,24 @@ func (a *AutoPotRunner) healUntilStatusUI(ctx context.Context, poller *statusui.
 				return
 			}
 			if poller.NeedsValidation() {
-				_ = a.validateWithLog(poller, cfg.Log)
+				if err := a.validateWithLog(poller, cfg.Log); err != nil {
+					healFails++
+					if healFails >= maxConsecutiveFails {
+						return
+					}
+					timing.Sleep(ctx, statusUIPollInterval)
+					continue
+				}
 			}
 			status, err = captureAndParse(poller)
 			if err != nil {
+				healFails++
+				if healFails >= maxConsecutiveFails {
+					return
+				}
 				continue
 			}
+			healFails = 0
 			notifyStatus(cfg, poller, status)
 			pct, threshold = statPercent(status, cfg, hpBar)
 			if pct >= threshold {
@@ -174,8 +200,13 @@ func (a *AutoPotRunner) validateWithLog(poller *statusui.StripPoller, log func(s
 }
 
 // captureAndParse captures the cached strip region and parses HP/SP values.
+// Returns an error if the strip rect is zero (not yet validated), the screen
+// capture fails, or parsing fails.
 func captureAndParse(poller *statusui.StripPoller) (statusui.ParsedStatus, error) {
 	r := poller.StripRect()
+	if r.Empty() {
+		return statusui.ParsedStatus{}, fmt.Errorf("strip rect not yet validated")
+	}
 	strip, err := win.CaptureScreenRegion(win.ScreenROI{X: r.Min.X, Y: r.Min.Y, W: r.Dx(), H: r.Dy()})
 	if err != nil {
 		return statusui.ParsedStatus{}, err
