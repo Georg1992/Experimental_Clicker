@@ -107,11 +107,6 @@ func (t *TimerKeyRunner) run(ctx context.Context, cfg TimerKeyConfig) {
 		if ctx.Err() != nil {
 			return
 		}
-		if session.Paused() {
-			timing.Sleep(ctx, timing.PollInterval)
-			continue
-		}
-
 		current := t.settings()
 		now := time.Now()
 		var earliest time.Time

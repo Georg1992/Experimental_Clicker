@@ -119,27 +119,27 @@ func (a *guiApp) buildControlPanel(parent walk.Container) error {
 	}
 	a.setClickerStatus(clickerStatusStopped)
 
-	pauseRow, err := walk.NewComposite(rightPanel)
+	toggleRow, err := walk.NewComposite(rightPanel)
 	if err != nil {
 		return err
 	}
-	pauseHBox := walk.NewHBoxLayout()
-	pauseHBox.SetSpacing(6)
-	if err := pauseRow.SetLayout(pauseHBox); err != nil {
+	toggleHBox := walk.NewHBoxLayout()
+	toggleHBox.SetSpacing(6)
+	if err := toggleRow.SetLayout(toggleHBox); err != nil {
 		return err
 	}
-	if _, err := walk.NewHSpacer(pauseRow); err != nil {
+	if _, err := walk.NewHSpacer(toggleRow); err != nil {
 		return err
 	}
 
-	pauseCaption, err := walk.NewLabel(pauseRow)
+	toggleCaption, err := walk.NewLabel(toggleRow)
 	if err != nil {
 		return err
 	}
-	if err := pauseCaption.SetText("Pause / resume all: End"); err != nil {
+	if err := toggleCaption.SetText("Toggle start / stop: End"); err != nil {
 		return err
 	}
-	pauseCaption.SetFont(hintFont)
+	toggleCaption.SetFont(hintFont)
 
 	return nil
 }

@@ -11,19 +11,16 @@ type clickerStatus int
 const (
 	clickerStatusStopped clickerStatus = iota
 	clickerStatusRunning
-	clickerStatusPaused
 )
 
 var statusColors = map[clickerStatus]walk.Color{
 	clickerStatusStopped: walk.RGB(220, 53, 53),
 	clickerStatusRunning: walk.RGB(46, 184, 70),
-	clickerStatusPaused:  walk.RGB(230, 190, 40),
 }
 
 var statusTexts = map[clickerStatus]string{
 	clickerStatusStopped: "OFF",
 	clickerStatusRunning: "ON",
-	clickerStatusPaused:  "PAUSE",
 }
 
 const statusBadgeWidth = 110

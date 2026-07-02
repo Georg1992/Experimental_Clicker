@@ -9,7 +9,6 @@ import "time"
 // (clicker, autopot, keychain, timerkey). Each runner pulls from cfg.Session
 // without a concrete type binding. ViiperSession satisfies it.
 type InputSession interface {
-	Paused() bool
 	TapKey(vk int32, hold time.Duration) error
 	MouseDown() error
 	MouseUp() error

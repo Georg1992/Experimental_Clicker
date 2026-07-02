@@ -54,8 +54,6 @@ var methodsToCheck = []struct{ Type, Method string }{
 	{"TimerKeyRunner", "Wait"},
 	// ViiperSession (excluding InputSession interface impls, which are
 	// called through the interface from inside the runner package)
-	{"ViiperSession", "SetOnPauseChanged"},
-	{"ViiperSession", "StartPauseWatcher"},
 	{"ViiperSession", "Close"},
 }
 

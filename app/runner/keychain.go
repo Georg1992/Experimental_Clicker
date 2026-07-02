@@ -81,16 +81,10 @@ func (k *KeyChainRunner) Stop() { k.lc.Stop() }
 func (k *KeyChainRunner) Wait() { k.lc.Wait() }
 
 func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
-	session := cfg.Session
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if session.Paused() {
-			timing.Sleep(ctx, timing.PollInterval)
-			continue
-		}
-
 		current := k.settings()
 		if !current.Active() {
 			timing.Sleep(ctx, timing.PollInterval)
@@ -104,9 +98,6 @@ func (k *KeyChainRunner) run(ctx context.Context, cfg KeyChainConfig) {
 		}
 
 		for windows.PhysicalKeyDown(trigger) && ctx.Err() == nil {
-			if session.Paused() {
-				break
-			}
 			current = k.settings()
 			if !current.Active() {
 				break

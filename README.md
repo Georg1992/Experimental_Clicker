@@ -1,6 +1,6 @@
 # BELARUS CHAMP TOOLS
 
-Windows clicker with a Walk GUI. Hold a trigger key to repeat virtual key presses and left mouse clicks through embedded [VIIPER](https://github.com/Alia5/VIIPER) virtual HID devices.
+Windows tools suite with a Walk GUI — clicker, autopot, keychain, and timer keys. All input is routed through embedded [VIIPER](https://github.com/Alia5/VIIPER) virtual HID devices.
 
 ## Project layout
 
@@ -11,7 +11,7 @@ Belarus_Champ_Tools/
     build.ps1                    ← build app.exe
     package.ps1                  ← build user ZIP
     gui/                         ← Walk UI + embedded VIIPER server
-    runner/                      ← click loop, key mappings, pause
+    runner/                      ← click loop, autopot, keychain, timer keys
   packaging/
     README.txt / README.ru.txt
     Install.cmd / Uninstall.cmd
@@ -55,9 +55,9 @@ Users extract the ZIP and run `Install.cmd`. See `packaging/README.txt`.
 ## Usage
 
 1. Click **Start** before launching the game
-2. Bind trigger keys and set delay
-3. Hold a trigger key to click
-4. Press **End** to pause or resume (server stays running)
+2. Configure tools on each tab (Clicker, AutoPot, KeyChain, TimerKey)
+3. Hold a trigger key to click, or let AutoPot/KeyChain/TimerKey run
+4. Press **End** to stop tools (keep VIIPER running) or start them again
 5. Click **Stop** or close the app to turn off
 
 ### AutoPot tab
@@ -70,7 +70,7 @@ Bars under the character are detected by color in a small center region. When HP
 
 Set `BAR_SEARCH_DEBUG=1` to save a `bar_search_debug.png` crop for calibration.
 
-Status indicator: red **OFF**, green **ON**, yellow **PAUSE**.
+Status indicator: red **OFF**, green **ON**.
 
 ### Click loop
 
@@ -95,13 +95,18 @@ Default delay: **50 ms**. If a game misses clicks, try **50–100 ms**.
 
 | Path | Purpose |
 |------|---------|
+| Path | Purpose |
+|------|---------|
 | `app/gui/main.go` | Main window, Start/Stop, status badge |
-| `app/gui/status_badge.go` | ON / OFF / PAUSE indicator |
+| `app/gui/status_badge.go` | ON / OFF indicator |
 | `app/gui/server.go` | Embedded VIIPER lifecycle |
-| `app/runner/runner.go` | Click loop, End-key pause |
-| `app/runner/player_bars.go` | HP/SP bar detection under character (center crop) |
-| `app/runner/autopot.go` | AutoPot healing loop |
-| `app/runner/screen_windows.go` | Center screen region capture |
+| `app/gui/viiper_badge.go` | VIIPER server status badge |
+| `app/gui/viiper_monitor.go` | VIIPER server health monitor |
+| `app/runner/clicker.go` | Click loop (hold trigger to click) |
+| `app/runner/autopot/` | AutoPot healing loop |
+| `app/runner/keychain.go` | KeyChain macro runner |
+| `app/runner/timer_key.go` | Timer key runner |
+| `app/runner/viiper_session.go` | VIIPER session (keyboard + mouse) |
 | `packaging/` | Install/Uninstall scripts and user READMEs |
 | `release/` | Generated folder + ZIP (`package.ps1`) |
 | `VIIPER/` | Upstream VIIPER (`replace` in `app/go.mod`) |

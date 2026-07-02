@@ -14,4 +14,6 @@ import (
 var (
 	KeyBindTimeout = timing.KeyBindTimeout
 	DefaultAPIAddr = timing.DefaultAPIAddr
+	PollInterval   = timing.PollInterval
+	ToggleVK       = timing.ToggleVK
 )

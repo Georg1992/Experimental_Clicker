@@ -70,7 +70,7 @@ import it from the GUI. The internal packages can move freely
 | `timer_key_tab.go` | Timer-key slot rows + interval + hotkey binding |
 | `runner_control.go` | Shared helpers: `makeLifecycleSlot`, `startLifecycle`, `bindKeyFlow` |
 | `server.go` | Embedded VIIPER HTTP server start/stop |
-| `status_badge.go` | Stopped/Running/Paused pill widget |
+| `status_badge.go` | Stopped/Running pill widget |
 | `keychain_arrows.go` | Arrow icons on the KeyChain tab |
 | `flag.go` | Belarus flag asset (window icon) |
 | `prereq_windows.go` | Windows-specific prereq checks |

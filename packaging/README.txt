@@ -13,8 +13,8 @@ Extract this ZIP, then:
    (only needed the first time)
 
 3. Double-click Belarus Champ Tools.exe in this folder
-   Click Start, add your trigger key, then open your game.
-   Hold the trigger key to click. Press End to pause.
+   Click Start, configure your tools, then open your game.
+   Press End to toggle start/stop.
 
 
 Uninstall

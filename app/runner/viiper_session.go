@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"belarus-champ-tools/runner/internal/timing"
-	windows "belarus-champ-tools/runner/platform/windows"
 
 	"github.com/Alia5/VIIPER/device/keyboard"
 	"github.com/Alia5/VIIPER/device/mouse"
@@ -24,12 +23,6 @@ type ViiperSession struct {
 	writeMu     sync.Mutex
 	keyStream   *viiperclient.DeviceStream
 	mouseStream *viiperclient.DeviceStream
-
-	pauseMu        sync.RWMutex
-	paused         bool
-	onPauseChanged func(bool)
-	pauseCancel    context.CancelFunc
-	pauseDone      chan struct{}
 
 	closeOnce sync.Once
 }
@@ -85,62 +78,19 @@ func OpenViiperSession(ctx context.Context, apiAddr string, log func(string)) (*
 	}, nil
 }
 
-func (s *ViiperSession) SetOnPauseChanged(fn func(bool)) {
-	s.pauseMu.Lock()
-	s.onPauseChanged = fn
-	s.pauseMu.Unlock()
-}
-
-func (s *ViiperSession) Paused() bool {
-	s.pauseMu.RLock()
-	defer s.pauseMu.RUnlock()
-	return s.paused
-}
-
-func (s *ViiperSession) StartPauseWatcher(ctx context.Context, log func(string)) {
-	if log == nil {
-		log = noopLog
-	}
-	watchCtx, cancel := context.WithCancel(ctx)
-	s.pauseCancel = cancel
-	s.pauseDone = make(chan struct{})
-
-	go func() {
-		defer close(s.pauseDone)
-		pauseKeyDown := false
-		for watchCtx.Err() == nil {
-			if windows.PollKeyToggle(&pauseKeyDown, timing.PauseVK) {
-				s.togglePaused(log)
-			}
-			time.Sleep(timing.PollInterval)
-		}
-	}()
-}
-
-func (s *ViiperSession) togglePaused(log func(string)) {
-	s.pauseMu.Lock()
-	s.paused = !s.paused
-	paused := s.paused
-	onChange := s.onPauseChanged
-	s.pauseMu.Unlock()
-
-	s.ReleaseAll()
-	if onChange != nil {
-		onChange(paused)
-	}
-	if paused {
-		log("Paused (End to resume)")
-	} else {
-		log("Resumed")
-	}
+// Reset releases all keys / mouse buttons without closing streams,
+// removing devices, or removing the bus. The session stays alive and
+// can be reused by a subsequent Start. Call Close() for full cleanup
+// when the application exits.
+func (s *ViiperSession) Reset() {
+	s.writeMu.Lock()
+	_ = keyUpLocked(s.keyStream)
+	_ = mouseUpLocked(s.mouseStream)
+	s.writeMu.Unlock()
 }
 
 func (s *ViiperSession) Close() {
 	s.closeOnce.Do(func() {
-		if s.pauseCancel != nil {
-			s.pauseCancel()
-			<-s.pauseDone
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), timing.SessionCloseWait)
 		defer cancel()
 

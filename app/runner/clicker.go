@@ -99,11 +99,6 @@ func (r *Runner) run(ctx context.Context, cfg Config) {
 		if ctx.Err() != nil {
 			return
 		}
-		if cfg.Session.Paused() {
-			timing.Sleep(ctx, timing.PollInterval)
-			continue
-		}
-
 		anySlot := false
 		for _, slot := range r.settings().Slots {
 			if len(slot.TriggerVKs) == 0 {
@@ -137,10 +132,6 @@ func (r *Runner) runSlot(ctx context.Context, sess session.InputSession, slot Cl
 		if ctx.Err() != nil {
 			return true
 		}
-		if sess.Paused() {
-			return false
-		}
-
 		// 1. Key press
 		for _, vk := range slot.TriggerVKs {
 			if vk == 0 {

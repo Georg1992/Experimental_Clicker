@@ -178,7 +178,7 @@ func (a *AutoPotRunner) run(ctx context.Context, cfg AutoPotConfig) {
 		}
 
 		cfg = a.settings()
-		if cfg.Session == nil || cfg.Session.Paused() {
+		if cfg.Session == nil {
 			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}
@@ -249,7 +249,7 @@ func (a *AutoPotRunner) healUntil(ctx context.Context, reader BarReader, hpBar b
 		}
 
 		cfg := a.settings()
-		if cfg.Session == nil || cfg.Session.Paused() {
+		if cfg.Session == nil {
 			timing.Sleep(ctx, timing.PollInterval)
 			continue
 		}

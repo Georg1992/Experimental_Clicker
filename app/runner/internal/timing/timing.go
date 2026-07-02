@@ -16,9 +16,9 @@ const (
 	SessionCloseWait  = 10 * time.Second
 )
 
-// PauseVK is the virtual-key code the pause watcher polls.
-// "End" key (VK_END == 0x23) is used to toggle pause/resume.
-const PauseVK int32 = 0x23
+// ToggleVK is the virtual-key code for the stop/start toggle watcher.
+// "End" key (VK_END == 0x23) toggles the app between running and stopped.
+const ToggleVK int32 = 0x23
 
 // DefaultAPIAddr is the default address of the embedded VIIPER API server.
 // Port 3242 verified at runtime (2026-07-02): "API listening addr=[::]:3242".
